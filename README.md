@@ -19,7 +19,7 @@ npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 npx wrangler secret put TURNSTILE_SECRET
 ```
 
-La API devuelve solo el DNI enmascarado y los datos necesarios para la consulta. El RPC de Supabase debe permitir ejecución a `service_role`, no a `anon`.
+La API devuelve nombre, apellido, DNI enmascarado y los datos necesarios para la consulta. El RPC de Supabase debe permitir ejecución a `service_role`, no a `anon`.
 
 ## Desarrollo
 

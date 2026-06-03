@@ -169,7 +169,7 @@ frm.addEventListener("submit", async (e) => {
       return;
     }
 
-    nombre.textContent = "Consulta encontrada";
+    nombre.textContent = `${data.apellido || ""} ${data.nombre || ""}`.trim() || "Consulta encontrada";
     dniOut.textContent = data.dni_masked ? `DNI: ${data.dni_masked}` : "";
 
     const p = estadoParticular(data.particular_restantes_hhmm);

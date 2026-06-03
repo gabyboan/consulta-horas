@@ -130,6 +130,8 @@ export default {
         {
           found: true,
           dni_masked: maskDni(dni),
+          apellido: result.apellido,
+          nombre: result.nombre,
           particular_restantes_hhmm: result.particular_restantes_hhmm,
           enfermedad_usada: Boolean(result.enfermedad_usada),
         },
