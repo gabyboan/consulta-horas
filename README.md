@@ -8,6 +8,8 @@ Página pública y Worker de Cloudflare para consultar horas disponibles del per
 - `src/index.js`: API server-side desplegada como Cloudflare Worker.
 - Supabase se consulta únicamente desde el Worker con `SUPABASE_SERVICE_ROLE_KEY`.
 - Turnstile se valida en el Worker antes de ejecutar la RPC.
+- El Worker exige que Turnstile haya emitido el token para `hesm-horas.pages.dev`.
+- Cada DNI admite hasta 5 consultas por minuto.
 
 ## Seguridad
 

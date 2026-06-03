@@ -5,6 +5,7 @@ const ALLOWED_ORIGINS = new Set([
 const SUPABASE_RPC = "/rest/v1/rpc/rpc_consulta_horas_public";
 const TURNSTILE_VERIFY_URL =
   "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+const TURNSTILE_HOSTNAME = "hesm-horas.pages.dev";
 
 function json(body, status = 200, origin = "") {
   const headers = {
@@ -37,10 +38,9 @@ async function verifyTurnstile(token, remoteIp, secret) {
     body: form,
   });
 
-  if (!response.ok) return false;
+  if (!response.ok) return { success: false };
 
-  const result = await response.json();
-  return result.success === true;
+  return response.json();
 }
 
 async function querySupabase(dni, env) {
@@ -111,14 +111,38 @@ export default {
 
     try {
       const remoteIp = request.headers.get("CF-Connecting-IP") || "";
-      const isHuman = await verifyTurnstile(
+      const turnstileResult = await verifyTurnstile(
         turnstileToken,
         remoteIp,
         env.TURNSTILE_SECRET,
       );
 
-      if (!isHuman) {
+      if (
+        turnstileResult.success !== true ||
+        turnstileResult.hostname !== TURNSTILE_HOSTNAME
+      ) {
+        console.warn(
+          JSON.stringify({
+            event: "turnstile_rejected",
+            hostname: turnstileResult.hostname || null,
+          }),
+        );
         return json({ error: "Captcha inválido o vencido" }, 403, origin);
+      }
+
+      const rateLimit = await env.CONSULTA_RATE_LIMITER.limit({ key: dni });
+      if (!rateLimit.success) {
+        console.warn(
+          JSON.stringify({
+            event: "consulta_rate_limited",
+            dni_masked: maskDni(dni),
+          }),
+        );
+        return json(
+          { error: "Demasiadas consultas. Intentá nuevamente en un minuto." },
+          429,
+          origin,
+        );
       }
 
       const result = await querySupabase(dni, env);
