@@ -39,7 +39,7 @@ npm run deploy:pages
 El workflow `.github/workflows/deploy.yml` despliega automáticamente al hacer push a `main`.
 Configura estos secretos en GitHub Actions:
 
-- `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_API_TOKEN`
 
+El repositorio usa `CLOUDFLARE_ACCOUNT_ID` como variable de GitHub Actions.
 El token debe tener únicamente los permisos necesarios para editar Workers y Pages.
