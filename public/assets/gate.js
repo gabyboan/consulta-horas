@@ -74,7 +74,7 @@ window.onTurnstileOk = async (turnstileToken) => {
 
     setPill("ok", "Acceso habilitado");
     gateMessage.textContent = "Verificación correcta. Ingresando a la consulta...";
-    window.setTimeout(() => window.location.replace("./consulta.html"), 350);
+    window.location.replace("./consulta");
   } catch (error) {
     console.error(error);
     clearAccessToken();
@@ -101,7 +101,5 @@ window.onTurnstileError = () => {
   gateMessage.textContent = "No se pudo cargar la verificación. Recargá la página e intentá nuevamente.";
 };
 
-document.addEventListener("DOMContentLoaded", () => {
-  clearAccessToken();
-  setWhatsAppLink();
-});
+clearAccessToken();
+setWhatsAppLink();

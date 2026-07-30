@@ -36,7 +36,7 @@ async function obtenerAcceso(env, allowedOrigin = origin) {
 }
 
 async function consultaCon(resultadoRpc, opciones = {}) {
-  const { carreraId = 1, registrosImprevistos = [], allowedOrigin = origin } = opciones;
+  const { allowedOrigin = origin } = opciones;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const target = String(url);
@@ -48,12 +48,6 @@ async function consultaCon(resultadoRpc, opciones = {}) {
     }
     if (target.includes("/rpc/rpc_consulta_horas_public")) {
       return Response.json([resultadoRpc]);
-    }
-    if (target.includes("/persona_carreras?")) {
-      return Response.json(carreraId == null ? [] : [{ carrera_id: carreraId }]);
-    }
-    if (target.includes("/imprevistos_registros?")) {
-      return Response.json(registrosImprevistos);
     }
     throw new Error(`Fetch inesperado: ${target}`);
   };
@@ -73,8 +67,7 @@ async function consultaCon(resultadoRpc, opciones = {}) {
     globalThis.fetch = originalFetch;
   }
 }
-
-test("calcula los imprevistos disponibles para carreras habilitadas", async () => {
+test("devuelve los imprevistos informados por la RPC", async () => {
   const { response, body } = await consultaCon({
     apellido: "Ejemplo",
     nombre: "Persona",
@@ -82,6 +75,7 @@ test("calcula los imprevistos disponibles para carreras habilitadas", async () =
     enfermedad_usada: false,
     horas_a_favor_hhmm: "5:45",
     francos_disponibles: 2,
+    imprevistos_disponibles: 3,
   });
 
   assert.equal(response.status, 200);
@@ -90,35 +84,29 @@ test("calcula los imprevistos disponibles para carreras habilitadas", async () =
   assert.equal(body.imprevistos_disponibles, 3);
 });
 
-test("no informa imprevistos para carreras no habilitadas", async () => {
-  const { body } = await consultaCon(
-    {
-      apellido: "Ejemplo",
-      nombre: "Sin beneficio",
-      particular_restantes_hhmm: "0:00",
-      enfermedad_usada: true,
-      horas_a_favor_hhmm: "0:15",
-    },
-    { carreraId: 2 },
-  );
+test("no informa imprevistos cuando la RPC no devuelve el beneficio", async () => {
+  const { body } = await consultaCon({
+    apellido: "Ejemplo",
+    nombre: "Sin beneficio",
+    particular_restantes_hhmm: "0:00",
+    enfermedad_usada: true,
+    horas_a_favor_hhmm: "0:15",
+  });
 
   assert.equal(body.imprevistos_disponibles, null);
 });
 
-test("descuenta los imprevistos activos del anio", async () => {
-  const { body } = await consultaCon(
-    {
-      apellido: "Ejemplo",
-      nombre: "Con usos",
-      particular_restantes_hhmm: "1:00",
-      enfermedad_usada: false,
-    },
-    { carreraId: 3, registrosImprevistos: [{ id: 1 }, { id: 2 }] },
-  );
+test("conserva el saldo de imprevistos recibido por la RPC", async () => {
+  const { body } = await consultaCon({
+    apellido: "Ejemplo",
+    nombre: "Con usos",
+    particular_restantes_hhmm: "1:00",
+    enfermedad_usada: false,
+    imprevistos_disponibles: 1,
+  });
 
   assert.equal(body.imprevistos_disponibles, 1);
 });
-
 test("requiere un pase de acceso tambien desde la vista preliminar", async () => {
   const request = new Request(
     "https://consulta-horas.recursoshumanos-hesm.workers.dev/consulta?dni=12345678",
