@@ -1,6 +1,7 @@
 const API_BASE = "https://consulta-horas.recursoshumanos-hesm.workers.dev";
 const WHATSAPP_NUMBER = "5493435099425";
 const TIMEOUT_MS = 12000;
+const ACCESS_STORAGE_KEY = "consultaHorasAccessToken";
 
 const frm = document.getElementById("frm");
 const dniInput = document.getElementById("dni");
@@ -21,35 +22,23 @@ const pillText = document.getElementById("pillText");
 
 let lastController = null;
 
-let TURNSTILE_TOKEN = "";
-
-window.onTurnstileOk = (token) => {
-  TURNSTILE_TOKEN = token || "";
-};
-
-window.onTurnstileExpired = () => {
-  TURNSTILE_TOKEN = "";
-};
-
-window.onTurnstileError = () => {
-  TURNSTILE_TOKEN = "";
-};
-
-function getTurnstileToken(){
-  return TURNSTILE_TOKEN;
+function getAccessToken(){
+  try { return sessionStorage.getItem(ACCESS_STORAGE_KEY) || ""; }
+  catch (_) { return ""; }
 }
 
-function resetTurnstile(){
-  TURNSTILE_TOKEN = "";
-  try{
-    if (window.turnstile && typeof window.turnstile.reset === "function") {
-      window.turnstile.reset();
-    }
-  } catch (_) {}
+function clearAccessToken(){
+  try { sessionStorage.removeItem(ACCESS_STORAGE_KEY); }
+  catch (_) {}
+}
+
+function goToGate(){
+  clearAccessToken();
+  window.location.replace("./");
 }
 
 function setPill(state, text){
-  dot.classList.remove("ok","bad");
+  dot.classList.remove("ok", "bad");
   if(state === "ok") dot.classList.add("ok");
   if(state === "bad") dot.classList.add("bad");
   pillText.textContent = text;
@@ -59,17 +48,16 @@ function onlyDigits(s){ return (s || "").replace(/[^\d]/g, ""); }
 
 function saludoPorHora(date = new Date()){
   const h = date.getHours();
-  if (h >= 20 || h < 7) return "Buenas Noches";
+  if (h >= 20 || h < 7) return "Buenas noches";
   if (h < 12) return "Buen día";
-  return "Buenas Tardes";
+  return "Buenas tardes";
 }
 
 function setWhatsAppLink(){
   const wa = document.getElementById("waLink");
   if(!wa) return;
 
-  const saludo = saludoPorHora();
-  const texto = `${saludo}. Necesito ayuda con los permisos de salida`;
+  const texto = `${saludoPorHora()}. Necesito ayuda con los permisos de salida`;
   wa.href = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(texto)}`;
 }
 
@@ -80,7 +68,6 @@ function parseHhmmToMinutes(s){
 
   const neg = str.startsWith("-");
   const raw = neg ? str.slice(1) : str;
-
   const parts = raw.split(":");
   if(parts.length !== 2) return null;
 
@@ -88,14 +75,12 @@ function parseHhmmToMinutes(s){
   const mm = Number(parts[1]);
   if(!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
 
-  const total = hh * 60 + mm;
-  return neg ? -total : total;
+  return neg ? -(hh * 60 + mm) : hh * 60 + mm;
 }
 
 function estadoParticular(hhmm){
   const mins = parseHhmmToMinutes(hhmm);
   if(mins == null) return { label: "—", badge: "" };
-
   if(mins < 0) return { label: hhmm, badge: "EXCEDIDO" };
   if(mins === 0) return { label: hhmm, badge: "UTILIZADAS" };
   return { label: hhmm, badge: "DISPONIBLE" };
@@ -115,27 +100,33 @@ function mostrarImprevistos(value){
 }
 
 async function consultar(dni){
-  const token = getTurnstileToken();
-  if(!token) throw new Error("Captcha no verificado");
+  const accessToken = getAccessToken();
+  if(!accessToken){
+    goToGate();
+    const error = new Error("Acceso no verificado");
+    error.accessExpired = true;
+    throw error;
+  }
 
   if(lastController) lastController.abort();
   const controller = new AbortController();
   lastController = controller;
-
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try{
     const r = await fetch(`${API_BASE}/consulta?dni=${encodeURIComponent(dni)}`, {
       method: "GET",
       signal: controller.signal,
-      headers: { "X-Turnstile-Token": token }
+      headers: { "X-Consulta-Access": accessToken }
     });
 
     const data = await r.json().catch(() => ({}));
-
     if(!r.ok){
       if (r.status === 403) {
-        throw new Error(data?.error || "Captcha inválido / requerido");
+        goToGate();
+        const error = new Error(data?.error || "La verificación venció");
+        error.accessExpired = true;
+        throw error;
       }
       throw new Error(data?.error || "Error");
     }
@@ -147,11 +138,15 @@ async function consultar(dni){
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  if (!getAccessToken()) {
+    goToGate();
+    return;
+  }
   setWhatsAppLink();
 });
 
 dniInput.addEventListener("input", () => {
-  dniInput.value = onlyDigits(dniInput.value).slice(0,10);
+  dniInput.value = onlyDigits(dniInput.value).slice(0, 10);
   setWhatsAppLink();
 });
 
@@ -164,13 +159,13 @@ frm.addEventListener("submit", async (e) => {
 
   if(!/^\d{6,10}$/.test(dni)){
     out.style.display = "none";
-    setPill("bad","DNI inválido");
+    setPill("bad", "DNI inválido");
     alert("DNI inválido");
     return;
   }
 
   btn.disabled = true;
-  setPill(null,"Consultando...");
+  setPill(null, "Consultando...");
   out.style.display = "none";
 
   try{
@@ -178,9 +173,8 @@ frm.addEventListener("submit", async (e) => {
 
     if(!data.found){
       out.style.display = "none";
-      setPill("bad","No encontrado");
+      setPill("bad", "No encontrado");
       alert("No encontrado");
-      resetTurnstile();
       return;
     }
 
@@ -190,8 +184,7 @@ frm.addEventListener("submit", async (e) => {
     const p = estadoParticular(data.particular_restantes_hhmm);
     particulares.textContent = `${p.label}${p.badge ? " — " + p.badge : ""}`;
 
-    const enfUsada = !!data.enfermedad_usada;
-    enfermedad.textContent = enfUsada ? "NO disponible (ya usada)" : "DISPONIBLE";
+    enfermedad.textContent = data.enfermedad_usada ? "NO disponible (ya usada)" : "DISPONIBLE";
     horasFavor.textContent = data.horas_a_favor_hhmm || "—";
     mostrarImprevistos(data.imprevistos_disponibles);
 
@@ -204,14 +197,12 @@ frm.addEventListener("submit", async (e) => {
     }
 
     out.style.display = "block";
-    resetTurnstile();
-
   } catch(err){
+    if (err?.accessExpired) return;
     console.error(err);
     out.style.display = "none";
-    setPill("bad","Captcha / Error");
+    setPill("bad", "Error");
     alert(err.message || "Error");
-    resetTurnstile();
   } finally {
     btn.disabled = false;
   }

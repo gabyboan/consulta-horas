@@ -6,30 +6,45 @@ import worker from "../src/index.js";
 const origin = "https://hesm-horas.pages.dev";
 const previewOrigin =
   "https://preliminar-saldos-y-imprevis.hesm-horas.pages.dev";
-const previewWorker =
-  "https://preliminar-consulta-horas.recursoshumanos-hesm.workers.dev";
 
 function testEnvironment() {
   return {
     SUPABASE_URL: "https://example.supabase.co",
     SUPABASE_SERVICE_ROLE_KEY: "test-key",
-    TURNSTILE_SECRET: "test-secret",
+    TURNSTILE_SECRET: "test-turnstile-secret",
+    CONSULTA_ACCESS_SECRET: "test-access-secret",
     CONSULTA_RATE_LIMITER: {
       limit: async () => ({ success: true }),
     },
   };
 }
 
+async function obtenerAcceso(env, allowedOrigin = origin) {
+  const request = new Request("https://worker.example/acceso", {
+    method: "POST",
+    headers: {
+      Origin: allowedOrigin,
+      "X-Turnstile-Token": "test-token",
+    },
+  });
+  const response = await worker.fetch(request, env);
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(typeof body.access_token, "string");
+  return body.access_token;
+}
+
 async function consultaCon(resultadoRpc, opciones = {}) {
-  const {
-    carreraId = 1,
-    registrosImprevistos = [],
-  } = opciones;
+  const { carreraId = 1, registrosImprevistos = [], allowedOrigin = origin } = opciones;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const target = String(url);
     if (target.includes("siteverify")) {
-      return Response.json({ success: true, hostname: "hesm-horas.pages.dev" });
+      return Response.json({
+        success: true,
+        hostname: new URL(allowedOrigin).hostname,
+      });
     }
     if (target.includes("/rpc/rpc_consulta_horas_public")) {
       return Response.json([resultadoRpc]);
@@ -44,18 +59,21 @@ async function consultaCon(resultadoRpc, opciones = {}) {
   };
 
   try {
+    const env = testEnvironment();
+    const accessToken = await obtenerAcceso(env, allowedOrigin);
     const request = new Request("https://worker.example/consulta?dni=12345678", {
       headers: {
-        Origin: origin,
-        "X-Turnstile-Token": "test-token",
+        Origin: allowedOrigin,
+        "X-Consulta-Access": accessToken,
       },
     });
-    const response = await worker.fetch(request, testEnvironment());
+    const response = await worker.fetch(request, env);
     return { response, body: await response.json() };
   } finally {
     globalThis.fetch = originalFetch;
   }
 }
+
 test("calcula los imprevistos disponibles para carreras habilitadas", async () => {
   const { response, body } = await consultaCon({
     apellido: "Ejemplo",
@@ -64,7 +82,6 @@ test("calcula los imprevistos disponibles para carreras habilitadas", async () =
     enfermedad_usada: false,
     horas_a_favor_hhmm: "5:45",
     francos_disponibles: 2,
-    imprevistos_disponibles: null,
   });
 
   assert.equal(response.status, 200);
@@ -81,7 +98,6 @@ test("no informa imprevistos para carreras no habilitadas", async () => {
       particular_restantes_hhmm: "0:00",
       enfermedad_usada: true,
       horas_a_favor_hhmm: "0:15",
-      francos_disponibles: 1,
     },
     { carreraId: 2 },
   );
@@ -89,7 +105,7 @@ test("no informa imprevistos para carreras no habilitadas", async () => {
   assert.equal(body.imprevistos_disponibles, null);
 });
 
-test("descuenta los imprevistos activos del año", async () => {
+test("descuenta los imprevistos activos del anio", async () => {
   const { body } = await consultaCon(
     {
       apellido: "Ejemplo",
@@ -103,59 +119,119 @@ test("descuenta los imprevistos activos del año", async () => {
   assert.equal(body.imprevistos_disponibles, 1);
 });
 
-test("requiere captcha también desde la vista preliminar", async () => {
+test("requiere un pase de acceso tambien desde la vista preliminar", async () => {
   const request = new Request(
     "https://consulta-horas.recursoshumanos-hesm.workers.dev/consulta?dni=12345678",
-    { headers: { Origin: previewOrigin } },
+    {
+      headers: {
+        Origin: previewOrigin,
+        "X-Turnstile-Token": "test-token",
+      },
+    },
   );
   const response = await worker.fetch(request, testEnvironment());
 
   assert.equal(response.status, 403);
 });
 
-test("acepta un captcha válido emitido para la vista preliminar", async () => {
+test("mantiene el CAPTCHA actual para la web publicada durante la transicion", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
-    if (String(url).includes("siteverify")) {
-      return Response.json({ success: true, hostname: new URL(previewOrigin).hostname });
+    const target = String(url);
+    if (target.includes("siteverify")) {
+      return Response.json({ success: true, hostname: "hesm-horas.pages.dev" });
     }
-
-    return Response.json([
-      {
-        apellido: "Ejemplo",
-        nombre: "Preview",
-        particular_restantes_hhmm: "1:00",
-        enfermedad_usada: false,
-      },
-    ]);
+    if (target.includes("/rpc/rpc_consulta_horas_public")) {
+      return Response.json([]);
+    }
+    throw new Error(`Fetch inesperado: ${target}`);
   };
 
   try {
-    const request = new Request(
-      "https://consulta-horas.recursoshumanos-hesm.workers.dev/consulta?dni=12345678",
-      {
-        headers: {
-          Origin: previewOrigin,
-          "X-Turnstile-Token": "test-token",
-        },
+    const request = new Request("https://worker.example/consulta?dni=12345678", {
+      headers: {
+        Origin: origin,
+        "X-Turnstile-Token": "test-token",
       },
-    );
+    });
     const response = await worker.fetch(request, testEnvironment());
-    const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.equal(body.found, true);
+    assert.deepEqual(await response.json(), { found: false });
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("mantiene el captcha obligatorio en la API publicada", async () => {
-  const request = new Request(
-    "https://consulta-horas.recursoshumanos-hesm.workers.dev/consulta?dni=12345678",
-    { headers: { Origin: origin } },
+test("emite un pase solo luego de verificar Turnstile", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("siteverify")) {
+      return Response.json({ success: true, hostname: "hesm-horas.pages.dev" });
+    }
+    throw new Error(`Fetch inesperado: ${url}`);
+  };
+
+  try {
+    const env = testEnvironment();
+    const accessToken = await obtenerAcceso(env);
+    assert.match(accessToken, /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("acepta un pase valido emitido para la vista preliminar", async () => {
+  const { response, body } = await consultaCon(
+    {
+      apellido: "Ejemplo",
+      nombre: "Preview",
+      particular_restantes_hhmm: "1:00",
+      enfermedad_usada: false,
+    },
+    { allowedOrigin: previewOrigin },
   );
+
+  assert.equal(response.status, 200);
+  assert.equal(body.found, true);
+});
+
+test("rechaza un pase emitido para otro origen", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("siteverify")) {
+      return Response.json({ success: true, hostname: "hesm-horas.pages.dev" });
+    }
+    throw new Error(`Fetch inesperado: ${url}`);
+  };
+
+  try {
+    const env = testEnvironment();
+    const accessToken = await obtenerAcceso(env, origin);
+    const request = new Request("https://worker.example/consulta?dni=12345678", {
+      headers: {
+        Origin: previewOrigin,
+        "X-Consulta-Access": accessToken,
+      },
+    });
+    const response = await worker.fetch(request, env);
+
+    assert.equal(response.status, 403);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("permite el preflight de los dos encabezados de seguridad", async () => {
+  const request = new Request("https://worker.example/acceso", {
+    method: "OPTIONS",
+    headers: { Origin: origin },
+  });
   const response = await worker.fetch(request, testEnvironment());
 
-  assert.equal(response.status, 403);
+  assert.equal(response.status, 204);
+  assert.match(
+    response.headers.get("Access-Control-Allow-Headers") || "",
+    /X-Consulta-Access/,
+  );
 });

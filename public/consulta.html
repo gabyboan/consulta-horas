@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Consulta de Horas</title>
+
+  <meta name="robots" content="noindex,nofollow,noarchive,nosnippet" />
+  <meta name="referrer" content="no-referrer" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; connect-src 'self' https://consulta-horas.recursoshumanos-hesm.workers.dev; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests" />
+
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="stylesheet" href="./assets/app.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <h1>Consulta de Horas</h1>
+        <p class="sub">Ingresá tu DNI para ver horas particulares y por enfermedad disponibles del mes.</p>
+      </div>
+      <div class="pill" id="pill">
+        <span class="dot" id="dot"></span>
+        <span id="pillText">Acceso verificado</span>
+      </div>
+    </header>
+
+    <div class="card">
+      <form class="form" id="frm" novalidate>
+        <div>
+          <label for="dni">DNI</label>
+          <input id="dni" name="dni" inputmode="numeric" autocomplete="off"
+                 placeholder="Ej: 12345678" maxlength="10" />
+        </div>
+
+        <button id="btn" type="submit">Consultar</button>
+      </form>
+
+      <div class="hint">
+        Si el DNI no está en la carrera Enfermería o Escalafón General va a figurar "No encontrado".
+      </div>
+
+      <div id="out" style="display:none;">
+        <div class="resultHead">
+          <div>
+            <p class="name" id="nombre"></p>
+            <p class="dni" id="dniOut"></p>
+          </div>
+          <div class="status" id="status"></div>
+        </div>
+
+        <div class="grid">
+          <div class="hourCard">
+            <div class="k">HORAS PARTICULARES</div>
+            <div class="v" id="particulares"></div>
+          </div>
+
+          <div class="hourCard">
+            <div class="k">HORAS POR ENFERMEDAD</div>
+            <div class="v" id="enfermedad"></div>
+          </div>
+
+          <div class="hourCard">
+            <div class="k">HORAS A FAVOR</div>
+            <div class="v" id="horasFavor"></div>
+          </div>
+
+          <div class="hourCard" id="imprevistosCard" hidden>
+            <div class="k">IMPREVISTOS DISPONIBLES</div>
+            <div class="v" id="imprevistos"></div>
+          </div>
+        </div>
+      </div>
+
+      <footer class="footerLine">
+        <span>Ante dudas o inquietudes, comunicate con la oficina de Recursos Humanos.</span>
+        <a id="waLink" class="wa" href="#" target="_blank" rel="noopener noreferrer">
+          WhatsApp
+        </a>
+      </footer>
+    </div>
+  </div>
+
+  <script src="./assets/app.js" defer></script>
+</body>
+</html>

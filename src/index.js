@@ -12,6 +12,9 @@ const TURNSTILE_HOSTNAMES = new Set([
   "hesm-horas.pages.dev",
   "preliminar-saldos-y-imprevis.hesm-horas.pages.dev",
 ]);
+const ACCESS_TOKEN_VERSION = "consulta-horas-access-v1";
+const ACCESS_TOKEN_TTL_SECONDS = 10 * 60;
+const textEncoder = new TextEncoder();
 
 function json(body, status = 200, origin = "") {
   const headers = {
@@ -137,6 +140,90 @@ async function verifyTurnstile(token, remoteIp, secret) {
   return response.json();
 }
 
+function base64UrlEncode(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function base64UrlDecode(value) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value)) {
+    return null;
+  }
+
+  try {
+    const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(
+      Math.ceil(value.length / 4) * 4,
+      "=",
+    );
+    const binary = atob(padded);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+async function accessSigningKey(secret) {
+  return crypto.subtle.importKey(
+    "raw",
+    textEncoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign", "verify"],
+  );
+}
+
+async function createAccessToken(origin, secret) {
+  const payload = base64UrlEncode(
+    textEncoder.encode(
+      JSON.stringify({
+        origin,
+        exp: Math.floor(Date.now() / 1000) + ACCESS_TOKEN_TTL_SECONDS,
+      }),
+    ),
+  );
+  const signature = new Uint8Array(
+    await crypto.subtle.sign(
+      "HMAC",
+      await accessSigningKey(secret),
+      textEncoder.encode(`${ACCESS_TOKEN_VERSION}.${payload}`),
+    ),
+  );
+
+  return `${payload}.${base64UrlEncode(signature)}`;
+}
+
+async function hasValidAccessToken(token, origin, secret) {
+  const [payload, signature, extra] = (token || "").split(".");
+  if (!payload || !signature || extra) return false;
+
+  const signatureBytes = base64UrlDecode(signature);
+  const payloadBytes = base64UrlDecode(payload);
+  if (!signatureBytes || !payloadBytes) return false;
+
+  const validSignature = await crypto.subtle.verify(
+    "HMAC",
+    await accessSigningKey(secret),
+    signatureBytes,
+    textEncoder.encode(`${ACCESS_TOKEN_VERSION}.${payload}`),
+  );
+  if (!validSignature) return false;
+
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(payloadBytes));
+    return (
+      parsed?.origin === origin &&
+      Number.isFinite(parsed?.exp) &&
+      parsed.exp > Math.floor(Date.now() / 1000)
+    );
+  } catch {
+    return false;
+  }
+}
 async function querySupabase(dni, env) {
   const response = await fetch(`${env.SUPABASE_URL}${SUPABASE_RPC}`, {
     method: "POST",
@@ -174,52 +261,128 @@ export default {
         status: 204,
         headers: {
           "Access-Control-Allow-Origin": origin,
-          "Access-Control-Allow-Methods": "GET, OPTIONS",
-          "Access-Control-Allow-Headers": "X-Turnstile-Token",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers":
+            "X-Turnstile-Token, X-Consulta-Access",
           "Access-Control-Max-Age": "86400",
           Vary: "Origin",
         },
       });
     }
 
-    if (request.method !== "GET" || url.pathname !== "/consulta") {
-      return json({ error: "No encontrado" }, 404, origin);
-    }
-
     if (!originAllowed) {
       return json({ error: "Origen no permitido" }, 403, origin);
     }
 
-    const dni = (url.searchParams.get("dni") || "").replace(/\D/g, "");
-    if (!/^\d{6,10}$/.test(dni)) {
-      return json({ error: "DNI inválido" }, 400, origin);
+    if (request.method === "POST" && url.pathname === "/acceso") {
+      const turnstileToken = request.headers.get("X-Turnstile-Token") || "";
+      if (!turnstileToken) {
+        return json({ error: "Captcha requerido" }, 403, origin);
+      }
+
+      try {
+        const remoteIp = request.headers.get("CF-Connecting-IP") || "";
+        const turnstileResult = await verifyTurnstile(
+          turnstileToken,
+          remoteIp,
+          env.TURNSTILE_SECRET,
+        );
+
+        if (
+          turnstileResult.success !== true ||
+          !TURNSTILE_HOSTNAMES.has(turnstileResult.hostname)
+        ) {
+          console.warn(
+            JSON.stringify({
+              event: "turnstile_rejected",
+              hostname: turnstileResult.hostname || null,
+            }),
+          );
+          return json({ error: "Captcha invalido o vencido" }, 403, origin);
+        }
+
+        if (!env.CONSULTA_ACCESS_SECRET) {
+          console.error(JSON.stringify({ event: "access_secret_missing" }));
+          return json({ error: "No se pudo habilitar el acceso" }, 502, origin);
+        }
+
+        return json(
+          {
+            access_token: await createAccessToken(
+              origin,
+              env.CONSULTA_ACCESS_SECRET,
+            ),
+          },
+          200,
+          origin,
+        );
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            event: "access_error",
+            message: error instanceof Error ? error.message : "unknown",
+          }),
+        );
+        return json({ error: "No se pudo habilitar el acceso" }, 502, origin);
+      }
     }
 
-    const turnstileToken = request.headers.get("X-Turnstile-Token") || "";
-    if (!turnstileToken) {
-      return json({ error: "Captcha requerido" }, 403, origin);
+    if (request.method !== "GET" || url.pathname !== "/consulta") {
+      return json({ error: "No encontrado" }, 404, origin);
+    }
+
+    const dni = (url.searchParams.get("dni") || "").replace(/\D/g, "");
+    if (!/^\d{6,10}$/.test(dni)) {
+      return json({ error: "DNI invalido" }, 400, origin);
     }
 
     try {
-      const remoteIp = request.headers.get("CF-Connecting-IP") || "";
-      const turnstileResult = await verifyTurnstile(
-        turnstileToken,
-        remoteIp,
-        env.TURNSTILE_SECRET,
+      if (!env.CONSULTA_ACCESS_SECRET) {
+        console.error(JSON.stringify({ event: "access_secret_missing" }));
+        return json({ error: "No se pudo habilitar el acceso" }, 502, origin);
+      }
+
+      const accessToken = request.headers.get("X-Consulta-Access") || "";
+      let hasAccess = await hasValidAccessToken(
+        accessToken,
+        origin,
+        env.CONSULTA_ACCESS_SECRET,
       );
 
-      if (
-        turnstileResult.success !== true ||
-        !TURNSTILE_HOSTNAMES.has(turnstileResult.hostname)
-      ) {
-        console.warn(
-          JSON.stringify({
-            event: "turnstile_rejected",
-            hostname: turnstileResult.hostname || null,
-          }),
-        );
-        return json({ error: "Captcha inválido o vencido" }, 403, origin);
+      // La web publicada conserva temporalmente su flujo anterior mientras la
+      // vista preliminar usa el acceso previo. Ambos exigen Turnstile real.
+      if (!hasAccess && origin === PRODUCTION_ORIGIN) {
+        const legacyTurnstileToken =
+          request.headers.get("X-Turnstile-Token") || "";
+
+        if (legacyTurnstileToken) {
+          const remoteIp = request.headers.get("CF-Connecting-IP") || "";
+          const turnstileResult = await verifyTurnstile(
+            legacyTurnstileToken,
+            remoteIp,
+            env.TURNSTILE_SECRET,
+          );
+
+          if (
+            turnstileResult.success === true &&
+            TURNSTILE_HOSTNAMES.has(turnstileResult.hostname)
+          ) {
+            hasAccess = true;
+          } else {
+            console.warn(
+              JSON.stringify({
+                event: "turnstile_rejected",
+                hostname: turnstileResult.hostname || null,
+              }),
+            );
+          }
+        }
       }
+
+      if (!hasAccess) {
+        return json({ error: "Acceso no verificado o vencido" }, 403, origin);
+      }
+
       const rateLimit = await env.CONSULTA_RATE_LIMITER.limit({ key: dni });
       if (!rateLimit.success) {
         console.warn(
@@ -229,7 +392,7 @@ export default {
           }),
         );
         return json(
-          { error: "Demasiadas consultas. Intentá nuevamente en un minuto." },
+          { error: "Demasiadas consultas. Intenta nuevamente en un minuto." },
           429,
           origin,
         );
@@ -257,8 +420,6 @@ export default {
           francos_disponibles: optionalNonNegativeInteger(
             result.francos_disponibles,
           ),
-          // null significa que la persona no posee este beneficio. El
-          // frontend usa esa distinción para no mostrar la tarjeta.
           imprevistos_disponibles: imprevistosDisponibles,
         },
         200,
