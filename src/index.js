@@ -27,6 +27,24 @@ function maskDni(dni) {
   return `${dni.slice(0, 2)}****${dni.slice(-2)}`;
 }
 
+function optionalHhmm(value) {
+  if (typeof value !== "string") return null;
+
+  const match = /^(\d{1,4}):(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+
+  const minutes = Number(match[2]);
+  return minutes >= 0 && minutes <= 59 ? value.trim() : null;
+}
+
+function optionalNonNegativeInteger(value) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    return null;
+  }
+
+  return value;
+}
+
 async function verifyTurnstile(token, remoteIp, secret) {
   const form = new FormData();
   form.append("secret", secret);
@@ -158,6 +176,15 @@ export default {
           nombre: result.nombre,
           particular_restantes_hhmm: result.particular_restantes_hhmm,
           enfermedad_usada: Boolean(result.enfermedad_usada),
+          horas_a_favor_hhmm: optionalHhmm(result.horas_a_favor_hhmm),
+          francos_disponibles: optionalNonNegativeInteger(
+            result.francos_disponibles,
+          ),
+          // null significa que la persona no posee este beneficio. El
+          // frontend usa esa distinción para no mostrar la tarjeta.
+          imprevistos_disponibles: optionalNonNegativeInteger(
+            result.imprevistos_disponibles,
+          ),
         },
         200,
         origin,

@@ -72,3 +72,21 @@ Secretos y variables esperadas en GitHub Actions:
 - `CLOUDFLARE_ACCOUNT_ID`
 
 El token debe tener un alcance minimo para editar Workers y Pages.
+
+## Muestra preliminar: saldos y beneficios
+
+La rama `preliminar-saldos-y-imprevistos` prepara la interfaz para una muestra
+sin modificar el sitio publicado. Incluye `public/muestra-preliminar.html`, una
+vista estática con datos ficticios para revisar el diseño.
+
+La RPC `rpc_consulta_horas_public` debe ampliar su respuesta con estos campos:
+
+| Campo | Tipo | Regla de presentación |
+| --- | --- | --- |
+| `horas_a_favor_hhmm` | texto `HH:MM` o `null` | Se muestra como horas a favor. |
+| `francos_disponibles` | entero mayor o igual a 0 o `null` | La tarjeta se muestra siempre; si el dato aún no está informado muestra `—`. |
+| `imprevistos_disponibles` | entero mayor o igual a 0 o `null` | La tarjeta se muestra incluso con `0`; `null` u omitir el campo significa que la persona no posee el beneficio y la tarjeta no se muestra. |
+
+El Worker valida los tipos antes de enviarlos al navegador. La migración o
+actualización de la RPC debe realizarse en el repositorio que administra la
+base de Supabase; este repositorio sólo contiene el Worker y el frontend.

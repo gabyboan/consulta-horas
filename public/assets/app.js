@@ -11,6 +11,10 @@ const nombre = document.getElementById("nombre");
 const dniOut = document.getElementById("dniOut");
 const particulares = document.getElementById("particulares");
 const enfermedad = document.getElementById("enfermedad");
+const horasFavor = document.getElementById("horasFavor");
+const francos = document.getElementById("francos");
+const imprevistosCard = document.getElementById("imprevistosCard");
+const imprevistos = document.getElementById("imprevistos");
 const msg = document.getElementById("msg");
 const statusEl = document.getElementById("status");
 
@@ -99,6 +103,19 @@ function estadoParticular(hhmm){
   return { label: hhmm, badge: "DISPONIBLE" };
 }
 
+function cantidadDisponible(value, singular, plural){
+  if(!Number.isInteger(value) || value < 0) return "—";
+  return `${value} ${value === 1 ? singular : plural}`;
+}
+
+function mostrarImprevistos(value){
+  const tieneBeneficio = Number.isInteger(value) && value >= 0;
+  imprevistosCard.hidden = !tieneBeneficio;
+  imprevistos.textContent = tieneBeneficio
+    ? cantidadDisponible(value, "imprevisto", "imprevistos")
+    : "";
+}
+
 async function consultar(dni){
   const token = getTurnstileToken();
   if(!token) throw new Error("Captcha no verificado");
@@ -177,6 +194,13 @@ frm.addEventListener("submit", async (e) => {
 
     const enfUsada = !!data.enfermedad_usada;
     enfermedad.textContent = enfUsada ? "NO disponible (ya usada)" : "DISPONIBLE";
+    horasFavor.textContent = data.horas_a_favor_hhmm || "—";
+    francos.textContent = cantidadDisponible(
+      data.francos_disponibles,
+      "franco",
+      "francos",
+    );
+    mostrarImprevistos(data.imprevistos_disponibles);
 
     const mins = parseHhmmToMinutes(data.particular_restantes_hhmm);
     let m = "";
@@ -184,6 +208,21 @@ frm.addEventListener("submit", async (e) => {
     m += enfUsada
       ? "Horas por enfermedad: ya usadas este mes.\n"
       : "Horas por enfermedad: disponibles (1 vez por mes).\n";
+
+    m += `Horas a favor: ${data.horas_a_favor_hhmm || "—"}.\n`;
+    m += `Francos disponibles: ${cantidadDisponible(
+      data.francos_disponibles,
+      "franco",
+      "francos",
+    )}.\n`;
+
+    if(Number.isInteger(data.imprevistos_disponibles) && data.imprevistos_disponibles >= 0){
+      m += `Imprevistos disponibles: ${cantidadDisponible(
+        data.imprevistos_disponibles,
+        "imprevisto",
+        "imprevistos",
+      )}.\n`;
+    }
 
     if(mins != null && mins < 0){
       m += `Horas particulares: excedidas (${data.particular_restantes_hhmm}).`;
