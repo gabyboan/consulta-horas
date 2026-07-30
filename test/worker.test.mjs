@@ -4,6 +4,10 @@ import test from "node:test";
 import worker from "../src/index.js";
 
 const origin = "https://hesm-horas.pages.dev";
+const previewOrigin =
+  "https://preliminar-saldos-y-imprevis.hesm-horas.pages.dev";
+const previewWorker =
+  "https://preliminar-consulta-horas.recursoshumanos-hesm.workers.dev";
 
 function testEnvironment() {
   return {
@@ -69,4 +73,40 @@ test("representa el beneficio no aplicable con null", async () => {
   });
 
   assert.equal(body.imprevistos_disponibles, null);
+});
+
+test("permite la consulta temporal desde el preview sin captcha", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json([
+      {
+        apellido: "Ejemplo",
+        nombre: "Preview",
+        particular_restantes_hhmm: "1:00",
+        enfermedad_usada: false,
+      },
+    ]);
+
+  try {
+    const request = new Request(previewWorker + "/consulta?dni=12345678", {
+      headers: { Origin: previewOrigin },
+    });
+    const response = await worker.fetch(request, testEnvironment());
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.found, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("mantiene el captcha obligatorio en la API publicada", async () => {
+  const request = new Request(
+    "https://consulta-horas.recursoshumanos-hesm.workers.dev/consulta?dni=12345678",
+    { headers: { Origin: origin } },
+  );
+  const response = await worker.fetch(request, testEnvironment());
+
+  assert.equal(response.status, 403);
 });

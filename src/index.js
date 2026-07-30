@@ -1,11 +1,26 @@
-const ALLOWED_ORIGINS = new Set([
-  "https://hesm-horas.pages.dev",
-]);
+const PRODUCTION_ORIGIN = "https://hesm-horas.pages.dev";
+const PREVIEW_ORIGIN =
+  "https://preliminar-saldos-y-imprevis.hesm-horas.pages.dev";
+const PREVIEW_WORKER_HOST =
+  "preliminar-consulta-horas.recursoshumanos-hesm.workers.dev";
+const ALLOWED_ORIGINS = new Set([PRODUCTION_ORIGIN, PREVIEW_ORIGIN]);
 
 const SUPABASE_RPC = "/rest/v1/rpc/rpc_consulta_horas_public";
 const TURNSTILE_VERIFY_URL =
   "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const TURNSTILE_HOSTNAME = "hesm-horas.pages.dev";
+
+function isPreviewRequest(url) {
+  return url.hostname === PREVIEW_WORKER_HOST;
+}
+
+function isAllowedOrigin(origin, url) {
+  if (isPreviewRequest(url)) {
+    return origin === PREVIEW_ORIGIN;
+  }
+
+  return origin === PRODUCTION_ORIGIN;
+}
 
 function json(body, status = 200, origin = "") {
   const headers = {
@@ -91,9 +106,11 @@ export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin") || "";
     const url = new URL(request.url);
+    const originAllowed = isAllowedOrigin(origin, url);
+    const isPreview = isPreviewRequest(url);
 
     if (request.method === "OPTIONS") {
-      if (!ALLOWED_ORIGINS.has(origin)) {
+      if (!originAllowed) {
         return json({ error: "Origen no permitido" }, 403, origin);
       }
 
@@ -113,7 +130,7 @@ export default {
       return json({ error: "No encontrado" }, 404, origin);
     }
 
-    if (!ALLOWED_ORIGINS.has(origin)) {
+    if (!originAllowed) {
       return json({ error: "Origen no permitido" }, 403, origin);
     }
 
@@ -123,31 +140,32 @@ export default {
     }
 
     const turnstileToken = request.headers.get("X-Turnstile-Token") || "";
-    if (!turnstileToken) {
+    if (!isPreview && !turnstileToken) {
       return json({ error: "Captcha requerido" }, 403, origin);
     }
 
     try {
-      const remoteIp = request.headers.get("CF-Connecting-IP") || "";
-      const turnstileResult = await verifyTurnstile(
-        turnstileToken,
-        remoteIp,
-        env.TURNSTILE_SECRET,
-      );
-
-      if (
-        turnstileResult.success !== true ||
-        turnstileResult.hostname !== TURNSTILE_HOSTNAME
-      ) {
-        console.warn(
-          JSON.stringify({
-            event: "turnstile_rejected",
-            hostname: turnstileResult.hostname || null,
-          }),
+      if (!isPreview) {
+        const remoteIp = request.headers.get("CF-Connecting-IP") || "";
+        const turnstileResult = await verifyTurnstile(
+          turnstileToken,
+          remoteIp,
+          env.TURNSTILE_SECRET,
         );
-        return json({ error: "Captcha inválido o vencido" }, 403, origin);
-      }
 
+        if (
+          turnstileResult.success !== true ||
+          turnstileResult.hostname !== TURNSTILE_HOSTNAME
+        ) {
+          console.warn(
+            JSON.stringify({
+              event: "turnstile_rejected",
+              hostname: turnstileResult.hostname || null,
+            }),
+          );
+          return json({ error: "Captcha inválido o vencido" }, 403, origin);
+        }
+      }
       const rateLimit = await env.CONSULTA_RATE_LIMITER.limit({ key: dni });
       if (!rateLimit.success) {
         console.warn(

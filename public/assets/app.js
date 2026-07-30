@@ -1,4 +1,4 @@
-const API_BASE = "https://consulta-horas.recursoshumanos-hesm.workers.dev";
+const API_BASE = "https://preliminar-consulta-horas.recursoshumanos-hesm.workers.dev";
 const WHATSAPP_NUMBER = "5493435099425";
 const TIMEOUT_MS = 12000;
 
@@ -22,33 +22,6 @@ const dot = document.getElementById("dot");
 const pillText = document.getElementById("pillText");
 
 let lastController = null;
-
-let TURNSTILE_TOKEN = "";
-
-window.onTurnstileOk = (token) => {
-  TURNSTILE_TOKEN = token || "";
-};
-
-window.onTurnstileExpired = () => {
-  TURNSTILE_TOKEN = "";
-};
-
-window.onTurnstileError = () => {
-  TURNSTILE_TOKEN = "";
-};
-
-function getTurnstileToken(){
-  return TURNSTILE_TOKEN;
-}
-
-function resetTurnstile(){
-  TURNSTILE_TOKEN = "";
-  try{
-    if (window.turnstile && typeof window.turnstile.reset === "function") {
-      window.turnstile.reset();
-    }
-  } catch (_) {}
-}
 
 function setPill(state, text){
   dot.classList.remove("ok","bad");
@@ -117,9 +90,6 @@ function mostrarImprevistos(value){
 }
 
 async function consultar(dni){
-  const token = getTurnstileToken();
-  if(!token) throw new Error("Captcha no verificado");
-
   if(lastController) lastController.abort();
   const controller = new AbortController();
   lastController = controller;
@@ -130,14 +100,14 @@ async function consultar(dni){
     const r = await fetch(`${API_BASE}/consulta?dni=${encodeURIComponent(dni)}`, {
       method: "GET",
       signal: controller.signal,
-      headers: { "X-Turnstile-Token": token }
+      headers: {}
     });
 
     const data = await r.json().catch(() => ({}));
 
     if(!r.ok){
       if (r.status === 403) {
-        throw new Error(data?.error || "Captcha inválido / requerido");
+        throw new Error(data?.error || "Consulta no autorizada");
       }
       throw new Error(data?.error || "Error");
     }
@@ -182,7 +152,6 @@ frm.addEventListener("submit", async (e) => {
       out.style.display = "none";
       setPill("bad","No encontrado");
       alert("No encontrado");
-      resetTurnstile();
       return;
     }
 
@@ -244,14 +213,12 @@ frm.addEventListener("submit", async (e) => {
     msg.textContent = m;
     out.style.display = "block";
 
-    resetTurnstile();
 
   } catch(err){
     console.error(err);
     out.style.display = "none";
-    setPill("bad","Captcha / Error");
+    setPill("bad","Error de consulta");
     alert(err.message || "Error");
-    resetTurnstile();
   } finally {
     btn.disabled = false;
   }

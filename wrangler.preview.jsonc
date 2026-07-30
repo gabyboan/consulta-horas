@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "consulta-horas",
+  "main": "src/index.js",
+  "compatibility_date": "2026-06-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "preview_urls": true,
+  "ratelimits": [
+    {
+      "name": "CONSULTA_RATE_LIMITER",
+      "namespace_id": "2026060301",
+      "simple": {
+        "limit": 5,
+        "period": 60
+      }
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
