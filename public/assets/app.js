@@ -12,6 +12,8 @@ const nombre = document.getElementById("nombre");
 const dniOut = document.getElementById("dniOut");
 const particulares = document.getElementById("particulares");
 const enfermedad = document.getElementById("enfermedad");
+const particularesCard = document.getElementById("particularesCard");
+const enfermedadCard = document.getElementById("enfermedadCard");
 const francosCard = document.getElementById("francosCard");
 const francos = document.getElementById("francos");
 const imprevistosCard = document.getElementById("imprevistosCard");
@@ -92,6 +94,11 @@ function cantidadDisponible(value, singular, plural){
   return `${value} ${value === 1 ? singular : plural}`;
 }
 
+function mostrarHorasRegulares(value){
+  const mostrar = value !== false;
+  particularesCard.hidden = !mostrar;
+  enfermedadCard.hidden = !mostrar;
+}
 function mostrarImprevistos(value){
   const tieneBeneficio = Number.isInteger(value) && value >= 0;
   imprevistosCard.hidden = !tieneBeneficio;
@@ -186,6 +193,8 @@ frm.addEventListener("submit", async (e) => {
 
     nombre.textContent = `${data.apellido || ""} ${data.nombre || ""}`.trim() || "Consulta encontrada";
     dniOut.textContent = data.dni_masked ? `DNI: ${data.dni_masked}` : "";
+
+    mostrarHorasRegulares(data.mostrar_horas_regulares);
 
     const p = estadoParticular(data.particular_restantes_hhmm);
     particulares.textContent = `${p.label}${p.badge ? " — " + p.badge : ""}`;

@@ -18,7 +18,7 @@
     <header>
       <div class="brand">
         <h1>Consulta de Horas</h1>
-        <p class="sub">Ingresá tu DNI para ver horas particulares y por enfermedad disponibles del mes.</p>
+        <p class="sub">Ingresa tu DNI para consultar los beneficios disponibles.</p>
       </div>
       <div class="pill" id="pill">
         <span class="dot" id="dot"></span>
@@ -37,9 +37,6 @@
         <button id="btn" type="submit">Consultar</button>
       </form>
 
-      <div class="hint">
-        Si el DNI no está en la carrera Enfermería o Escalafón General va a figurar "No encontrado".
-      </div>
 
       <div id="out" style="display:none;">
         <div class="resultHead">
@@ -51,12 +48,12 @@
         </div>
 
         <div class="grid">
-          <div class="hourCard">
+          <div class="hourCard" id="particularesCard">
             <div class="k">HORAS PARTICULARES</div>
             <div class="v" id="particulares"></div>
           </div>
 
-          <div class="hourCard">
+          <div class="hourCard" id="enfermedadCard">
             <div class="k">HORAS POR ENFERMEDAD</div>
             <div class="v" id="enfermedad"></div>
           </div>

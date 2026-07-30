@@ -5,6 +5,8 @@ const ALLOWED_ORIGINS = new Set([PRODUCTION_ORIGIN, PREVIEW_ORIGIN]);
 
 const SUPABASE_RPC = "/rest/v1/rpc/rpc_consulta_horas_public";
 const BENEFICIOS_RPC = "/rest/v1/rpc/rpc_consulta_horas_beneficios_public";
+const CARRERA_PREVIEW_RPC =
+  "/rest/v1/rpc/rpc_consulta_horas_carrera_preliminar";
 const TURNSTILE_VERIFY_URL =
   "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const TURNSTILE_HOSTNAMES = new Set([
@@ -184,6 +186,35 @@ async function querySupabase(dni, env) {
   return Array.isArray(payload) ? payload[0] : payload;
 }
 
+async function queryCarreraPreliminar(dni, env) {
+  const response = await fetch(`${env.SUPABASE_URL}${CARRERA_PREVIEW_RPC}`, {
+    method: "POST",
+    headers: supabaseHeaders(env),
+    body: JSON.stringify({ p_dni: Number(dni) }),
+  });
+
+  if (!response.ok) {
+    console.error(
+      JSON.stringify({
+        event: "supabase_carrera_preliminar_rpc_error",
+        status: response.status,
+      }),
+    );
+    throw new Error("Supabase preview career RPC failed");
+  }
+
+  const payload = await response.json();
+  const result = Array.isArray(payload) ? payload[0] : payload;
+  const carreraId = Number(result?.carrera_id);
+
+  if (![1, 2, 3].includes(carreraId)) return null;
+
+  return {
+    apellido: typeof result?.apellido === "string" ? result.apellido : "",
+    nombre: typeof result?.nombre === "string" ? result.nombre : "",
+    carrera_id: carreraId,
+  };
+}
 async function queryBeneficios(dni, env) {
   const response = await fetch(`${env.SUPABASE_URL}${BENEFICIOS_RPC}`, {
     method: "POST",
@@ -365,11 +396,28 @@ export default {
         );
       }
 
-      const result = await querySupabase(dni, env);
+      let result = await querySupabase(dni, env);
+      let carreraPreliminar = null;
+
+      if (origin === PREVIEW_ORIGIN) {
+        carreraPreliminar = await queryCarreraPreliminar(dni, env);
+        if (!carreraPreliminar) {
+          return json({ found: false }, 200, origin);
+        }
+
+        // La carrera 2 no tiene horas particulares ni por enfermedad, por eso
+        // puede no existir en la RPC historica de horas.
+        if (!result && carreraPreliminar.carrera_id === 2) {
+          result = {
+            apellido: carreraPreliminar.apellido,
+            nombre: carreraPreliminar.nombre,
+          };
+        }
+      }
+
       if (!result) {
         return json({ found: false }, 200, origin);
       }
-
 
       const responseBody = {
         found: true,
@@ -391,6 +439,8 @@ export default {
       // Los saldos de Francos e Imprevistos se exponen solamente durante la
       // muestra preliminar. La publicacion vigente conserva su respuesta actual.
       if (origin === PREVIEW_ORIGIN) {
+        responseBody.mostrar_horas_regulares =
+          carreraPreliminar.carrera_id !== 2;
         const beneficios = await queryBeneficios(dni, env);
         responseBody.francos_disponibles_hhmm =
           beneficios.francos_disponibles_hhmm;

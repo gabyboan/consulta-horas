@@ -36,7 +36,11 @@ async function obtenerAcceso(env, allowedOrigin = origin) {
 }
 
 async function consultaCon(resultadoRpc, opciones = {}) {
-  const { allowedOrigin = origin, resultadoBeneficios = {} } = opciones;
+  const {
+    allowedOrigin = origin,
+    resultadoBeneficios = {},
+    resultadoCarrera = { apellido: "Ejemplo", nombre: "Persona", carrera_id: 1 },
+  } = opciones;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const target = String(url);
@@ -45,6 +49,9 @@ async function consultaCon(resultadoRpc, opciones = {}) {
         success: true,
         hostname: new URL(allowedOrigin).hostname,
       });
+    }
+    if (target.includes("/rpc/rpc_consulta_horas_carrera_preliminar")) {
+      return Response.json([resultadoCarrera]);
     }
     if (target.includes("/rpc/rpc_consulta_horas_beneficios_public")) {
       return Response.json([resultadoBeneficios]);
@@ -125,6 +132,26 @@ test("conserva el saldo de imprevistos recibido por la RPC preliminar", async ()
   );
 
   assert.equal(body.imprevistos_disponibles, 1);
+});
+test("encuentra la carrera profesional sin horas particulares ni enfermedad", async () => {
+  const { response, body } = await consultaCon(null, {
+    allowedOrigin: previewOrigin,
+    resultadoCarrera: {
+      apellido: "Profesional",
+      nombre: "Sanitario",
+      carrera_id: 2,
+    },
+    resultadoBeneficios: { francos_disponibles_hhmm: "1:30" },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.found, true);
+  assert.equal(body.apellido, "Profesional");
+  assert.equal(body.nombre, "Sanitario");
+  assert.equal(body.mostrar_horas_regulares, false);
+  assert.equal("particular_restantes_hhmm" in body, false);
+  assert.equal(body.francos_disponibles_hhmm, "1:30");
+  assert.equal(body.imprevistos_disponibles, null);
 });
 test("requiere un pase de acceso tambien desde la vista preliminar", async () => {
   const request = new Request(
