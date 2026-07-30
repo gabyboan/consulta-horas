@@ -371,23 +371,34 @@ export default {
       }
 
 
-      const beneficios = await queryBeneficios(dni, env);
+      const responseBody = {
+        found: true,
+        dni_masked: maskDni(dni),
+        apellido: result.apellido,
+        nombre: result.nombre,
+        particular_restantes_hhmm: result.particular_restantes_hhmm,
+        enfermedad_usada: Boolean(result.enfermedad_usada),
+        horas_a_favor_hhmm: optionalHhmm(result.horas_a_favor_hhmm),
+        // Mantiene intacto el contrato de la web publicada.
+        francos_disponibles: optionalNonNegativeInteger(
+          result.francos_disponibles,
+        ),
+        imprevistos_disponibles: optionalNonNegativeInteger(
+          result.imprevistos_disponibles,
+        ),
+      };
 
-      return json(
-        {
-          found: true,
-          dni_masked: maskDni(dni),
-          apellido: result.apellido,
-          nombre: result.nombre,
-          particular_restantes_hhmm: result.particular_restantes_hhmm,
-          enfermedad_usada: Boolean(result.enfermedad_usada),
-          horas_a_favor_hhmm: optionalHhmm(result.horas_a_favor_hhmm),
-          francos_disponibles_hhmm: beneficios.francos_disponibles_hhmm,
-          imprevistos_disponibles: beneficios.imprevistos_disponibles,
-        },
-        200,
-        origin,
-      );
+      // Los saldos de Francos e Imprevistos se exponen solamente durante la
+      // muestra preliminar. La publicacion vigente conserva su respuesta actual.
+      if (origin === PREVIEW_ORIGIN) {
+        const beneficios = await queryBeneficios(dni, env);
+        responseBody.francos_disponibles_hhmm =
+          beneficios.francos_disponibles_hhmm;
+        responseBody.imprevistos_disponibles =
+          beneficios.imprevistos_disponibles;
+      }
+
+      return json(responseBody, 200, origin);
     } catch (error) {
       console.error(
         JSON.stringify({
