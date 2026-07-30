@@ -77,7 +77,7 @@ async function consultaCon(resultadoRpc, opciones = {}) {
     globalThis.fetch = originalFetch;
   }
 }
-test("devuelve francos e imprevistos informados por la RPC en la vista preliminar", async () => {
+test("devuelve francos e imprevistos informados por la RPC en el portal", async () => {
   const { response, body } = await consultaCon(
     {
       apellido: "Ejemplo",
@@ -96,12 +96,12 @@ test("devuelve francos e imprevistos informados por la RPC en la vista prelimina
   );
 
   assert.equal(response.status, 200);
-  assert.equal(body.horas_a_favor_hhmm, "5:45");
+  assert.equal("horas_a_favor_hhmm" in body, false);
   assert.equal(body.francos_disponibles_hhmm, "2:00");
   assert.equal(body.imprevistos_disponibles, 3);
 });
 
-test("omite beneficios no informados por la RPC en la vista preliminar", async () => {
+test("omite beneficios no informados por la RPC en el portal", async () => {
   const { body } = await consultaCon(
     {
       apellido: "Ejemplo",
@@ -117,7 +117,7 @@ test("omite beneficios no informados por la RPC en la vista preliminar", async (
   assert.equal(body.imprevistos_disponibles, null);
 });
 
-test("conserva el saldo de imprevistos recibido por la RPC preliminar", async () => {
+test("conserva el saldo de imprevistos recibido por la RPC de beneficios", async () => {
   const { body } = await consultaCon(
     {
       apellido: "Ejemplo",
@@ -153,7 +153,7 @@ test("encuentra la carrera profesional sin horas particulares ni enfermedad", as
   assert.equal(body.francos_disponibles_hhmm, "1:30");
   assert.equal(body.imprevistos_disponibles, null);
 });
-test("requiere un pase de acceso tambien desde la vista preliminar", async () => {
+test("requiere un pase de acceso desde el portal", async () => {
   const request = new Request(
     "https://consulta-horas.recursoshumanos-hesm.workers.dev/consulta?dni=12345678",
     {
@@ -168,45 +168,26 @@ test("requiere un pase de acceso tambien desde la vista preliminar", async () =>
   assert.equal(response.status, 403);
 });
 
-test("mantiene la respuesta publicada sin consultar beneficios preliminares", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url) => {
-    const target = String(url);
-    if (target.includes("siteverify")) {
-      return Response.json({ success: true, hostname: "hesm-horas.pages.dev" });
-    }
-    if (target.includes("/rpc/rpc_consulta_horas_public")) {
-      return Response.json([
-        {
-          apellido: "Ejemplo",
-          nombre: "Publicado",
-          particular_restantes_hhmm: "1:30",
-          enfermedad_usada: false,
-          francos_disponibles: 2,
-          imprevistos_disponibles: 1,
-        },
-      ]);
-    }
-    throw new Error(`Fetch inesperado: ${target}`);
-  };
+test("aplica beneficios y la regla de carrera 2 en el sitio oficial", async () => {
+  const { response, body } = await consultaCon(null, {
+    resultadoCarrera: {
+      apellido: "Profesional",
+      nombre: "Sanitario",
+      carrera_id: 2,
+    },
+    resultadoBeneficios: {
+      francos_disponibles_hhmm: "1:30",
+      imprevistos_disponibles: 2,
+    },
+  });
 
-  try {
-    const request = new Request("https://worker.example/consulta?dni=12345678", {
-      headers: {
-        Origin: origin,
-        "X-Turnstile-Token": "test-token",
-      },
-    });
-    const response = await worker.fetch(request, testEnvironment());
-    const body = await response.json();
-
-    assert.equal(response.status, 200);
-    assert.equal(body.francos_disponibles, 2);
-    assert.equal(body.imprevistos_disponibles, 1);
-    assert.equal("francos_disponibles_hhmm" in body, false);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  assert.equal(response.status, 200);
+  assert.equal(body.found, true);
+  assert.equal(body.mostrar_horas_regulares, false);
+  assert.equal("particular_restantes_hhmm" in body, false);
+  assert.equal("enfermedad_usada" in body, false);
+  assert.equal(body.francos_disponibles_hhmm, "1:30");
+  assert.equal(body.imprevistos_disponibles, 2);
 });
 test("emite un pase solo luego de verificar Turnstile", async () => {
   const originalFetch = globalThis.fetch;

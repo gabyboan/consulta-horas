@@ -323,3 +323,55 @@ button:hover{ background:#01494C; }
   padding-top:14px;
   border-top:1px solid var(--line);
 }
+/* Tema oficial: verde petrÃ³leo institucional como fondo. */
+:root{
+  --bg:#025E62;
+  --card:#FFFFFF;
+  --muted:#555555;
+  --text:#181818;
+  --text-muted:#555555;
+  --white-soft:#FAFAFA;
+  --white:#FFFFFF;
+  --ok:#025E62;
+  --bad:#292929;
+  --warn:#7DACAE;
+  --line:#D9D9D9;
+  --shadow:0 20px 48px rgba(0,41,43,.30);
+  color-scheme:light;
+}
+
+body{
+  background:
+    radial-gradient(900px 520px at 0% 0%, rgba(125,172,174,.42), transparent 58%),
+    radial-gradient(800px 500px at 100% 100%, rgba(0,49,51,.30), transparent 62%),
+    var(--bg);
+}
+
+h1{color:var(--white)}
+
+.sub{color:rgba(255,255,255,.84)}
+
+.card{
+  background:var(--card);
+  border-color:rgba(255,255,255,.56);
+  box-shadow:var(--shadow);
+}
+
+.hourCard{
+  background:var(--white-soft);
+  border-left:4px solid var(--warn);
+}
+
+.pill{
+  background:var(--white);
+  border-color:rgba(255,255,255,.62);
+  box-shadow:0 4px 14px rgba(0,41,43,.16);
+}
+
+.dot{box-shadow:0 0 0 4px rgba(125,172,174,.25)}
+
+.footerLine{color:var(--text-muted)}
+
+@media (max-width:720px){
+  body{padding:16px}
+}

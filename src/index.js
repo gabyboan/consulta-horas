@@ -5,7 +5,7 @@ const ALLOWED_ORIGINS = new Set([PRODUCTION_ORIGIN, PREVIEW_ORIGIN]);
 
 const SUPABASE_RPC = "/rest/v1/rpc/rpc_consulta_horas_public";
 const BENEFICIOS_RPC = "/rest/v1/rpc/rpc_consulta_horas_beneficios_public";
-const CARRERA_PREVIEW_RPC =
+const CARRERA_RPC =
   "/rest/v1/rpc/rpc_consulta_horas_carrera_preliminar";
 const TURNSTILE_VERIFY_URL =
   "https://challenges.cloudflare.com/turnstile/v0/siteverify";
@@ -186,8 +186,8 @@ async function querySupabase(dni, env) {
   return Array.isArray(payload) ? payload[0] : payload;
 }
 
-async function queryCarreraPreliminar(dni, env) {
-  const response = await fetch(`${env.SUPABASE_URL}${CARRERA_PREVIEW_RPC}`, {
+async function queryCarrera(dni, env) {
+  const response = await fetch(`${env.SUPABASE_URL}${CARRERA_RPC}`, {
     method: "POST",
     headers: supabaseHeaders(env),
     body: JSON.stringify({ p_dni: Number(dni) }),
@@ -347,35 +347,6 @@ export default {
         env.CONSULTA_ACCESS_SECRET,
       );
 
-      // La web publicada conserva temporalmente su flujo anterior mientras la
-      // vista preliminar usa el acceso previo. Ambos exigen Turnstile real.
-      if (!hasAccess && origin === PRODUCTION_ORIGIN) {
-        const legacyTurnstileToken =
-          request.headers.get("X-Turnstile-Token") || "";
-
-        if (legacyTurnstileToken) {
-          const remoteIp = request.headers.get("CF-Connecting-IP") || "";
-          const turnstileResult = await verifyTurnstile(
-            legacyTurnstileToken,
-            remoteIp,
-            env.TURNSTILE_SECRET,
-          );
-
-          if (
-            turnstileResult.success === true &&
-            TURNSTILE_HOSTNAMES.has(turnstileResult.hostname)
-          ) {
-            hasAccess = true;
-          } else {
-            console.warn(
-              JSON.stringify({
-                event: "turnstile_rejected",
-                hostname: turnstileResult.hostname || null,
-              }),
-            );
-          }
-        }
-      }
 
       if (!hasAccess) {
         return json({ error: "Acceso no verificado o vencido" }, 403, origin);
@@ -397,22 +368,18 @@ export default {
       }
 
       let result = await querySupabase(dni, env);
-      let carreraPreliminar = null;
+      const carrera = await queryCarrera(dni, env);
+      if (!carrera) {
+        return json({ found: false }, 200, origin);
+      }
 
-      if (origin === PREVIEW_ORIGIN) {
-        carreraPreliminar = await queryCarreraPreliminar(dni, env);
-        if (!carreraPreliminar) {
-          return json({ found: false }, 200, origin);
-        }
-
-        // La carrera 2 no tiene horas particulares ni por enfermedad, por eso
-        // puede no existir en la RPC historica de horas.
-        if (!result && carreraPreliminar.carrera_id === 2) {
-          result = {
-            apellido: carreraPreliminar.apellido,
-            nombre: carreraPreliminar.nombre,
-          };
-        }
+      // La carrera 2 no tiene horas particulares ni por enfermedad, por eso
+      // puede no existir en la RPC historica de horas.
+      if (!result && carrera.carrera_id === 2) {
+        result = {
+          apellido: carrera.apellido,
+          nombre: carrera.nombre,
+        };
       }
 
       if (!result) {
@@ -424,29 +391,17 @@ export default {
         dni_masked: maskDni(dni),
         apellido: result.apellido,
         nombre: result.nombre,
-        particular_restantes_hhmm: result.particular_restantes_hhmm,
-        enfermedad_usada: Boolean(result.enfermedad_usada),
-        horas_a_favor_hhmm: optionalHhmm(result.horas_a_favor_hhmm),
-        // Mantiene intacto el contrato de la web publicada.
-        francos_disponibles: optionalNonNegativeInteger(
-          result.francos_disponibles,
-        ),
-        imprevistos_disponibles: optionalNonNegativeInteger(
-          result.imprevistos_disponibles,
-        ),
+        mostrar_horas_regulares: carrera.carrera_id !== 2,
       };
 
-      // Los saldos de Francos e Imprevistos se exponen solamente durante la
-      // muestra preliminar. La publicacion vigente conserva su respuesta actual.
-      if (origin === PREVIEW_ORIGIN) {
-        responseBody.mostrar_horas_regulares =
-          carreraPreliminar.carrera_id !== 2;
-        const beneficios = await queryBeneficios(dni, env);
-        responseBody.francos_disponibles_hhmm =
-          beneficios.francos_disponibles_hhmm;
-        responseBody.imprevistos_disponibles =
-          beneficios.imprevistos_disponibles;
+      if (responseBody.mostrar_horas_regulares) {
+        responseBody.particular_restantes_hhmm = result.particular_restantes_hhmm;
+        responseBody.enfermedad_usada = Boolean(result.enfermedad_usada);
       }
+
+      const beneficios = await queryBeneficios(dni, env);
+      responseBody.francos_disponibles_hhmm = beneficios.francos_disponibles_hhmm;
+      responseBody.imprevistos_disponibles = beneficios.imprevistos_disponibles;
 
       return json(responseBody, 200, origin);
     } catch (error) {
