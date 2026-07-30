@@ -13,6 +13,8 @@ const dniOut = document.getElementById("dniOut");
 const particulares = document.getElementById("particulares");
 const enfermedad = document.getElementById("enfermedad");
 const horasFavor = document.getElementById("horasFavor");
+const francosCard = document.getElementById("francosCard");
+const francos = document.getElementById("francos");
 const imprevistosCard = document.getElementById("imprevistosCard");
 const imprevistos = document.getElementById("imprevistos");
 const statusEl = document.getElementById("status");
@@ -99,6 +101,11 @@ function mostrarImprevistos(value){
     : "";
 }
 
+function mostrarFrancos(value){
+  const disponibles = typeof value === "string" && /^-?\d{1,4}:\d{2}$/.test(value);
+  francosCard.hidden = !disponibles;
+  francos.textContent = disponibles ? `${value} hs` : "";
+}
 async function consultar(dni){
   const accessToken = getAccessToken();
   if(!accessToken){
@@ -186,6 +193,7 @@ frm.addEventListener("submit", async (e) => {
 
     enfermedad.textContent = data.enfermedad_usada ? "NO disponible (ya usada)" : "DISPONIBLE";
     horasFavor.textContent = data.horas_a_favor_hhmm || "—";
+    mostrarFrancos(data.francos_disponibles_hhmm);
     mostrarImprevistos(data.imprevistos_disponibles);
 
     if (p.badge === "EXCEDIDO") {

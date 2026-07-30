@@ -4,6 +4,7 @@ const PREVIEW_ORIGIN =
 const ALLOWED_ORIGINS = new Set([PRODUCTION_ORIGIN, PREVIEW_ORIGIN]);
 
 const SUPABASE_RPC = "/rest/v1/rpc/rpc_consulta_horas_public";
+const BENEFICIOS_RPC = "/rest/v1/rpc/rpc_consulta_horas_beneficios_public";
 const TURNSTILE_VERIFY_URL =
   "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const TURNSTILE_HOSTNAMES = new Set([
@@ -183,6 +184,35 @@ async function querySupabase(dni, env) {
   return Array.isArray(payload) ? payload[0] : payload;
 }
 
+async function queryBeneficios(dni, env) {
+  const response = await fetch(`${env.SUPABASE_URL}${BENEFICIOS_RPC}`, {
+    method: "POST",
+    headers: supabaseHeaders(env),
+    body: JSON.stringify({ p_dni: Number(dni) }),
+  });
+
+  if (!response.ok) {
+    console.error(
+      JSON.stringify({
+        event: "supabase_beneficios_rpc_error",
+        status: response.status,
+      }),
+    );
+    throw new Error("Supabase benefits RPC failed");
+  }
+
+  const payload = await response.json();
+  const result = Array.isArray(payload) ? payload[0] : payload;
+
+  return {
+    francos_disponibles_hhmm: optionalHhmm(
+      result?.francos_disponibles_hhmm,
+    ),
+    imprevistos_disponibles: optionalNonNegativeInteger(
+      result?.imprevistos_disponibles,
+    ),
+  };
+}
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin") || "";
@@ -341,6 +371,8 @@ export default {
       }
 
 
+      const beneficios = await queryBeneficios(dni, env);
+
       return json(
         {
           found: true,
@@ -350,12 +382,8 @@ export default {
           particular_restantes_hhmm: result.particular_restantes_hhmm,
           enfermedad_usada: Boolean(result.enfermedad_usada),
           horas_a_favor_hhmm: optionalHhmm(result.horas_a_favor_hhmm),
-          francos_disponibles: optionalNonNegativeInteger(
-            result.francos_disponibles,
-          ),
-          imprevistos_disponibles: optionalNonNegativeInteger(
-            result.imprevistos_disponibles,
-          ),
+          francos_disponibles_hhmm: beneficios.francos_disponibles_hhmm,
+          imprevistos_disponibles: beneficios.imprevistos_disponibles,
         },
         200,
         origin,

@@ -36,7 +36,7 @@ async function obtenerAcceso(env, allowedOrigin = origin) {
 }
 
 async function consultaCon(resultadoRpc, opciones = {}) {
-  const { allowedOrigin = origin } = opciones;
+  const { allowedOrigin = origin, resultadoBeneficios = {} } = opciones;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const target = String(url);
@@ -45,6 +45,9 @@ async function consultaCon(resultadoRpc, opciones = {}) {
         success: true,
         hostname: new URL(allowedOrigin).hostname,
       });
+    }
+    if (target.includes("/rpc/rpc_consulta_horas_beneficios_public")) {
+      return Response.json([resultadoBeneficios]);
     }
     if (target.includes("/rpc/rpc_consulta_horas_public")) {
       return Response.json([resultadoRpc]);
@@ -67,24 +70,27 @@ async function consultaCon(resultadoRpc, opciones = {}) {
     globalThis.fetch = originalFetch;
   }
 }
-test("devuelve los imprevistos informados por la RPC", async () => {
+test("devuelve francos e imprevistos informados por la RPC de beneficios", async () => {
   const { response, body } = await consultaCon({
     apellido: "Ejemplo",
     nombre: "Persona",
     particular_restantes_hhmm: "2:30",
     enfermedad_usada: false,
     horas_a_favor_hhmm: "5:45",
-    francos_disponibles: 2,
-    imprevistos_disponibles: 3,
+  }, {
+    resultadoBeneficios: {
+      francos_disponibles_hhmm: "2:00",
+      imprevistos_disponibles: 3,
+    },
   });
 
   assert.equal(response.status, 200);
   assert.equal(body.horas_a_favor_hhmm, "5:45");
-  assert.equal(body.francos_disponibles, 2);
+  assert.equal(body.francos_disponibles_hhmm, "2:00");
   assert.equal(body.imprevistos_disponibles, 3);
 });
 
-test("no informa imprevistos cuando la RPC no devuelve el beneficio", async () => {
+test("omite beneficios no informados por la RPC", async () => {
   const { body } = await consultaCon({
     apellido: "Ejemplo",
     nombre: "Sin beneficio",
@@ -93,6 +99,7 @@ test("no informa imprevistos cuando la RPC no devuelve el beneficio", async () =
     horas_a_favor_hhmm: "0:15",
   });
 
+  assert.equal(body.francos_disponibles_hhmm, null);
   assert.equal(body.imprevistos_disponibles, null);
 });
 
@@ -102,7 +109,8 @@ test("conserva el saldo de imprevistos recibido por la RPC", async () => {
     nombre: "Con usos",
     particular_restantes_hhmm: "1:00",
     enfermedad_usada: false,
-    imprevistos_disponibles: 1,
+  }, {
+    resultadoBeneficios: { imprevistos_disponibles: 1 },
   });
 
   assert.equal(body.imprevistos_disponibles, 1);
@@ -128,6 +136,9 @@ test("mantiene el CAPTCHA actual para la web publicada durante la transicion", a
     const target = String(url);
     if (target.includes("siteverify")) {
       return Response.json({ success: true, hostname: "hesm-horas.pages.dev" });
+    }
+    if (target.includes("/rpc/rpc_consulta_horas_beneficios_public")) {
+      return Response.json([{}]);
     }
     if (target.includes("/rpc/rpc_consulta_horas_public")) {
       return Response.json([]);
