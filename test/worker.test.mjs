@@ -75,10 +75,24 @@ test("representa el beneficio no aplicable con null", async () => {
   assert.equal(body.imprevistos_disponibles, null);
 });
 
-test("permite la consulta temporal desde el preview sin captcha", async () => {
+test("requiere captcha también desde la vista preliminar", async () => {
+  const request = new Request(
+    "https://consulta-horas.recursoshumanos-hesm.workers.dev/consulta?dni=12345678",
+    { headers: { Origin: previewOrigin } },
+  );
+  const response = await worker.fetch(request, testEnvironment());
+
+  assert.equal(response.status, 403);
+});
+
+test("acepta un captcha válido emitido para la vista preliminar", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () =>
-    Response.json([
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("siteverify")) {
+      return Response.json({ success: true, hostname: new URL(previewOrigin).hostname });
+    }
+
+    return Response.json([
       {
         apellido: "Ejemplo",
         nombre: "Preview",
@@ -86,11 +100,18 @@ test("permite la consulta temporal desde el preview sin captcha", async () => {
         enfermedad_usada: false,
       },
     ]);
+  };
 
   try {
-    const request = new Request(previewWorker + "/consulta?dni=12345678", {
-      headers: { Origin: previewOrigin },
-    });
+    const request = new Request(
+      "https://consulta-horas.recursoshumanos-hesm.workers.dev/consulta?dni=12345678",
+      {
+        headers: {
+          Origin: previewOrigin,
+          "X-Turnstile-Token": "test-token",
+        },
+      },
+    );
     const response = await worker.fetch(request, testEnvironment());
     const body = await response.json();
 
