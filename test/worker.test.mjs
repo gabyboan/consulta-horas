@@ -20,14 +20,27 @@ function testEnvironment() {
   };
 }
 
-async function consultaCon(resultadoRpc) {
+async function consultaCon(resultadoRpc, opciones = {}) {
+  const {
+    carreraId = 1,
+    registrosImprevistos = [],
+  } = opciones;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
-    if (String(url).includes("siteverify")) {
+    const target = String(url);
+    if (target.includes("siteverify")) {
       return Response.json({ success: true, hostname: "hesm-horas.pages.dev" });
     }
-
-    return Response.json([resultadoRpc]);
+    if (target.includes("/rpc/rpc_consulta_horas_public")) {
+      return Response.json([resultadoRpc]);
+    }
+    if (target.includes("/persona_carreras?")) {
+      return Response.json(carreraId == null ? [] : [{ carrera_id: carreraId }]);
+    }
+    if (target.includes("/imprevistos_registros?")) {
+      return Response.json(registrosImprevistos);
+    }
+    throw new Error(`Fetch inesperado: ${target}`);
   };
 
   try {
@@ -43,8 +56,7 @@ async function consultaCon(resultadoRpc) {
     globalThis.fetch = originalFetch;
   }
 }
-
-test("incluye los saldos nuevos v?lidos y conserva cero imprevistos", async () => {
+test("calcula los imprevistos disponibles para carreras habilitadas", async () => {
   const { response, body } = await consultaCon({
     apellido: "Ejemplo",
     nombre: "Persona",
@@ -52,27 +64,43 @@ test("incluye los saldos nuevos v?lidos y conserva cero imprevistos", async () =
     enfermedad_usada: false,
     horas_a_favor_hhmm: "5:45",
     francos_disponibles: 2,
-    imprevistos_disponibles: 0,
+    imprevistos_disponibles: null,
   });
 
   assert.equal(response.status, 200);
   assert.equal(body.horas_a_favor_hhmm, "5:45");
   assert.equal(body.francos_disponibles, 2);
-  assert.equal(body.imprevistos_disponibles, 0);
+  assert.equal(body.imprevistos_disponibles, 3);
 });
 
-test("representa el beneficio no aplicable con null", async () => {
-  const { body } = await consultaCon({
-    apellido: "Ejemplo",
-    nombre: "Sin beneficio",
-    particular_restantes_hhmm: "0:00",
-    enfermedad_usada: true,
-    horas_a_favor_hhmm: "0:15",
-    francos_disponibles: 1,
-    imprevistos_disponibles: null,
-  });
+test("no informa imprevistos para carreras no habilitadas", async () => {
+  const { body } = await consultaCon(
+    {
+      apellido: "Ejemplo",
+      nombre: "Sin beneficio",
+      particular_restantes_hhmm: "0:00",
+      enfermedad_usada: true,
+      horas_a_favor_hhmm: "0:15",
+      francos_disponibles: 1,
+    },
+    { carreraId: 2 },
+  );
 
   assert.equal(body.imprevistos_disponibles, null);
+});
+
+test("descuenta los imprevistos activos del año", async () => {
+  const { body } = await consultaCon(
+    {
+      apellido: "Ejemplo",
+      nombre: "Con usos",
+      particular_restantes_hhmm: "1:00",
+      enfermedad_usada: false,
+    },
+    { carreraId: 3, registrosImprevistos: [{ id: 1 }, { id: 2 }] },
+  );
+
+  assert.equal(body.imprevistos_disponibles, 1);
 });
 
 test("requiere captcha también desde la vista preliminar", async () => {

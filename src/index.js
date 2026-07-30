@@ -4,6 +4,8 @@ const PREVIEW_ORIGIN =
 const ALLOWED_ORIGINS = new Set([PRODUCTION_ORIGIN, PREVIEW_ORIGIN]);
 
 const SUPABASE_RPC = "/rest/v1/rpc/rpc_consulta_horas_public";
+const IMPREVISTOS_CARRERA_IDS = new Set([1, 3]);
+const IMPREVISTOS_MAXIMO_ANUAL = 3;
 const TURNSTILE_VERIFY_URL =
   "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const TURNSTILE_HOSTNAMES = new Set([
@@ -49,6 +51,76 @@ function optionalNonNegativeInteger(value) {
   return value;
 }
 
+function supabaseHeaders(env) {
+  return {
+    apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+}
+
+async function querySupabaseRows(path, env) {
+  const response = await fetch(`${env.SUPABASE_URL}${path}`, {
+    method: "GET",
+    headers: supabaseHeaders(env),
+  });
+
+  if (!response.ok) {
+    console.error(
+      JSON.stringify({
+        event: "supabase_table_error",
+        status: response.status,
+      }),
+    );
+    throw new Error("Supabase table query failed");
+  }
+
+  const payload = await response.json();
+  return Array.isArray(payload) ? payload : [];
+}
+
+function currentYearInArgentina() {
+  return Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Argentina/Buenos_Aires",
+      year: "numeric",
+    }).format(new Date()),
+  );
+}
+
+async function queryImprevistosDisponibles(dni, env) {
+  const carrerasParams = new URLSearchParams({
+    dni: `eq.${dni}`,
+    carrera_id: "in.(1,3)",
+    select: "carrera_id",
+  });
+  const carreras = await querySupabaseRows(
+    `/rest/v1/persona_carreras?${carrerasParams}`,
+    env,
+  );
+  const carreraId = carreras
+    .map((carrera) => Number(carrera?.carrera_id))
+    .find((id) => IMPREVISTOS_CARRERA_IDS.has(id));
+
+  if (!carreraId) return null;
+
+  const registrosParams = new URLSearchParams({
+    dni: `eq.${dni}`,
+    carrera_id: `eq.${carreraId}`,
+    anio: `eq.${currentYearInArgentina()}`,
+    deleted_at: "is.null",
+    select: "id",
+    limit: String(IMPREVISTOS_MAXIMO_ANUAL),
+  });
+  const registros = await querySupabaseRows(
+    `/rest/v1/imprevistos_registros?${registrosParams}`,
+    env,
+  );
+
+  return Math.max(0, IMPREVISTOS_MAXIMO_ANUAL - registros.length);
+}
+
 async function verifyTurnstile(token, remoteIp, secret) {
   const form = new FormData();
   form.append("secret", secret);
@@ -68,12 +140,8 @@ async function verifyTurnstile(token, remoteIp, secret) {
 async function querySupabase(dni, env) {
   const response = await fetch(`${env.SUPABASE_URL}${SUPABASE_RPC}`, {
     method: "POST",
-    headers: {
-      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
+    headers: supabaseHeaders(env),
+
     body: JSON.stringify({ p_dni: Number(dni) }),
   });
 
@@ -172,6 +240,11 @@ export default {
         return json({ found: false }, 200, origin);
       }
 
+      const imprevistosDisponibles = await queryImprevistosDisponibles(
+        Number(dni),
+        env,
+      );
+
       return json(
         {
           found: true,
@@ -186,9 +259,7 @@ export default {
           ),
           // null significa que la persona no posee este beneficio. El
           // frontend usa esa distinción para no mostrar la tarjeta.
-          imprevistos_disponibles: optionalNonNegativeInteger(
-            result.imprevistos_disponibles,
-          ),
+          imprevistos_disponibles: imprevistosDisponibles,
         },
         200,
         origin,
