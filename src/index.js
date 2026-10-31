@@ -1,3 +1,5 @@
+import { AccessError, requireSecrets, limitRequest, employeeFor, readDni, signInEmployee } from "./security.js";
+
 const PRODUCTION_ORIGIN = "https://hesm-horas.pages.dev";
 const PREVIEW_ORIGIN =
   "https://preliminar-saldos-y-imprevis.hesm-horas.pages.dev";
@@ -13,7 +15,7 @@ const TURNSTILE_HOSTNAMES = new Set([
   "hesm-horas.pages.dev",
   "preliminar-saldos-y-imprevis.hesm-horas.pages.dev",
 ]);
-const ACCESS_TOKEN_VERSION = "consulta-horas-access-v1";
+const ACCESS_TOKEN_VERSION = "consulta-horas-access-v2";
 const ACCESS_TOKEN_TTL_SECONDS = 10 * 60;
 const textEncoder = new TextEncoder();
 
@@ -22,7 +24,11 @@ function json(body, status = 200, origin = "") {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
+    "Strict-Transport-Security": "max-age=31536000",
     "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+    "X-Frame-Options": "DENY",
+    Vary: "Origin",
   };
 
   if (ALLOWED_ORIGINS.has(origin)) {
@@ -30,7 +36,8 @@ function json(body, status = 200, origin = "") {
     headers.Vary = "Origin";
   }
 
-  return new Response(JSON.stringify(body), { status, headers });
+  if (status === 429) headers["Retry-After"] = "60";
+  return new Response(body === null ? null : JSON.stringify(body), { status, headers });
 }
 
 function maskDni(dni) {
@@ -73,6 +80,9 @@ async function verifyTurnstile(token, remoteIp, secret) {
   const response = await fetch(TURNSTILE_VERIFY_URL, {
     method: "POST",
     body: form,
+    signal: AbortSignal.timeout(10000),
+    // workerd supports manual/follow only. Non-2xx responses fail closed below.
+    redirect: "manual",
   });
 
   if (!response.ok) return { success: false };
@@ -117,11 +127,14 @@ async function accessSigningKey(secret) {
   );
 }
 
-async function createAccessToken(origin, secret) {
+async function createAccessToken(origin, secret, subject = null) {
   const payload = base64UrlEncode(
     textEncoder.encode(
       JSON.stringify({
         origin,
+        sub: subject,
+        iat: Math.floor(Date.now() / 1000),
+        jti: crypto.randomUUID(),
         exp: Math.floor(Date.now() / 1000) + ACCESS_TOKEN_TTL_SECONDS,
       }),
     ),
@@ -137,13 +150,14 @@ async function createAccessToken(origin, secret) {
   return `${payload}.${base64UrlEncode(signature)}`;
 }
 
-async function hasValidAccessToken(token, origin, secret) {
+async function validateAccessToken(token, origin, secret, subject = null) {
+  if (typeof token !== "string" || token.length > 2048) return false;
   const [payload, signature, extra] = (token || "").split(".");
   if (!payload || !signature || extra) return false;
 
   const signatureBytes = base64UrlDecode(signature);
   const payloadBytes = base64UrlDecode(payload);
-  if (!signatureBytes || !payloadBytes) return false;
+  if (!signatureBytes || signatureBytes.length !== 32 || !payloadBytes) return false;
 
   const validSignature = await crypto.subtle.verify(
     "HMAC",
@@ -155,11 +169,17 @@ async function hasValidAccessToken(token, origin, secret) {
 
   try {
     const parsed = JSON.parse(new TextDecoder().decode(payloadBytes));
-    return (
+    const valid = (
       parsed?.origin === origin &&
-      Number.isFinite(parsed?.exp) &&
+      parsed.sub === subject &&
+      typeof parsed.jti === "string" && parsed.jti.length === 36 &&
+      Number.isInteger(parsed.iat) && Number.isInteger(parsed.exp) &&
+      parsed.iat <= Math.floor(Date.now() / 1000) + 30 &&
+      parsed.exp > parsed.iat &&
+      parsed.exp - parsed.iat <= ACCESS_TOKEN_TTL_SECONDS &&
       parsed.exp > Math.floor(Date.now() / 1000)
     );
+    return valid ? parsed : null;
   } catch {
     return false;
   }
@@ -168,6 +188,8 @@ async function querySupabase(dni, env) {
   const response = await fetch(`${env.SUPABASE_URL}${SUPABASE_RPC}`, {
     method: "POST",
     headers: supabaseHeaders(env),
+    signal: AbortSignal.timeout(10000),
+    redirect: "manual",
 
     body: JSON.stringify({ p_dni: Number(dni) }),
   });
@@ -190,6 +212,8 @@ async function queryCarrera(dni, env) {
   const response = await fetch(`${env.SUPABASE_URL}${CARRERA_RPC}`, {
     method: "POST",
     headers: supabaseHeaders(env),
+    signal: AbortSignal.timeout(10000),
+    redirect: "manual",
     body: JSON.stringify({ p_dni: Number(dni) }),
   });
 
@@ -219,6 +243,8 @@ async function queryBeneficios(dni, env) {
   const response = await fetch(`${env.SUPABASE_URL}${BENEFICIOS_RPC}`, {
     method: "POST",
     headers: supabaseHeaders(env),
+    signal: AbortSignal.timeout(10000),
+    redirect: "manual",
     body: JSON.stringify({ p_dni: Number(dni) }),
   });
 
@@ -248,125 +274,104 @@ export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin") || "";
     const url = new URL(request.url);
-    const originAllowed = ALLOWED_ORIGINS.has(origin);
-
-    if (request.method === "OPTIONS") {
-      if (!originAllowed) {
-        return json({ error: "Origen no permitido" }, 403, origin);
-      }
-
-      return new Response(null, {
-        status: 204,
-        headers: {
-          "Access-Control-Allow-Origin": origin,
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers":
-            "X-Turnstile-Token, X-Consulta-Access",
-          "Access-Control-Max-Age": "86400",
-          Vary: "Origin",
-        },
-      });
-    }
-
-    if (!originAllowed) {
+    if (!ALLOWED_ORIGINS.has(origin)) {
       return json({ error: "Origen no permitido" }, 403, origin);
     }
-
-    if (request.method === "POST" && url.pathname === "/acceso") {
-      const turnstileToken = request.headers.get("X-Turnstile-Token") || "";
-      if (!turnstileToken) {
-        return json({ error: "Captcha requerido" }, 403, origin);
-      }
-
-      try {
-        const remoteIp = request.headers.get("CF-Connecting-IP") || "";
-        const turnstileResult = await verifyTurnstile(
-          turnstileToken,
-          remoteIp,
-          env.TURNSTILE_SECRET,
-        );
-
-        if (
-          turnstileResult.success !== true ||
-          !TURNSTILE_HOSTNAMES.has(turnstileResult.hostname)
-        ) {
-          console.warn(
-            JSON.stringify({
-              event: "turnstile_rejected",
-              hostname: turnstileResult.hostname || null,
-            }),
-          );
-          return json({ error: "Captcha invalido o vencido" }, 403, origin);
-        }
-
-        if (!env.CONSULTA_ACCESS_SECRET) {
-          console.error(JSON.stringify({ event: "access_secret_missing" }));
-          return json({ error: "No se pudo habilitar el acceso" }, 502, origin);
-        }
-
-        return json(
-          {
-            access_token: await createAccessToken(
-              origin,
-              env.CONSULTA_ACCESS_SECRET,
-            ),
-          },
-          200,
-          origin,
-        );
-      } catch (error) {
-        console.error(
-          JSON.stringify({
-            event: "access_error",
-            message: error instanceof Error ? error.message : "unknown",
-          }),
-        );
-        return json({ error: "No se pudo habilitar el acceso" }, 502, origin);
-      }
-    }
-
-    if (request.method !== "GET" || url.pathname !== "/consulta") {
+    if (!["/acceso", "/sesion", "/consulta"].includes(url.pathname)) {
       return json({ error: "No encontrado" }, 404, origin);
     }
-
-    const dni = (url.searchParams.get("dni") || "").replace(/\D/g, "");
-    if (!/^\d{6,10}$/.test(dni)) {
-      return json({ error: "DNI invalido" }, 400, origin);
+    if (request.method === "OPTIONS") {
+      const requestedHeaders = (request.headers.get("Access-Control-Request-Headers") || "")
+        .toLowerCase().split(",").map(h => h.trim()).filter(Boolean);
+      const allowedHeaders = ["content-type", "authorization", "x-turnstile-token", "x-consulta-access"];
+      if (request.headers.get("Access-Control-Request-Method") !== "POST" ||
+          requestedHeaders.some(h => !allowedHeaders.includes(h))) {
+        return json({ error: "Preflight no permitido" }, 403, origin);
+      }
+      const response = json(null, 204, origin);
+      response.headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+      response.headers.set("Access-Control-Allow-Headers", allowedHeaders.join(", "));
+      response.headers.set("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers");
+      return response;
     }
-
+    if (request.method !== "POST") {
+      const response = json({ error: "Metodo no permitido" }, 405, origin);
+      response.headers.set("Allow", "POST, OPTIONS");
+      return response;
+    }
+    if (url.search) return json({ error: "No se permiten parametros en la URL" }, 400, origin);
     try {
-      if (!env.CONSULTA_ACCESS_SECRET) {
-        console.error(JSON.stringify({ event: "access_secret_missing" }));
-        return json({ error: "No se pudo habilitar el acceso" }, 502, origin);
-      }
-
-      const accessToken = request.headers.get("X-Consulta-Access") || "";
-      let hasAccess = await hasValidAccessToken(
-        accessToken,
-        origin,
-        env.CONSULTA_ACCESS_SECRET,
+      requireSecrets(env);
+      const remoteIp = request.headers.get("CF-Connecting-IP");
+      if (!remoteIp) throw new AccessError(403, "Acceso no verificado");
+      await limitRequest(
+        url.pathname === "/acceso" ? env.ACCESO_RATE_LIMITER : env.CONSULTA_IP_RATE_LIMITER,
+        url.pathname === "/acceso" ? "access-ip" : "query-ip", remoteIp, env,
       );
-
-
-      if (!hasAccess) {
-        return json({ error: "Acceso no verificado o vencido" }, 403, origin);
+      let employee;
+      if (url.pathname === "/acceso") {
+        const token = request.headers.get("X-Turnstile-Token") || "";
+        if (!token || token.length > 2048) throw new AccessError(403, "Captcha requerido");
+        const result = await verifyTurnstile(token, remoteIp, env.TURNSTILE_SECRET);
+        const challengeTime = Date.parse(result.challenge_ts);
+        const age = Date.now() - challengeTime;
+        if (result.success !== true || result.action !== "turnstile-spin-v1" ||
+            !TURNSTILE_HOSTNAMES.has(result.hostname) ||
+            result.hostname !== new URL(origin).hostname ||
+            !Number.isFinite(challengeTime) || age < -30000 || age > 300000) {
+          throw new AccessError(403, "Captcha invalido o vencido");
+        }
+        let identityToken;
+        if (env.EMPLOYEE_AUTH_MODE === "supabase") {
+          const signedIn = await signInEmployee(request, env);
+          employee = signedIn.employee;
+          identityToken = signedIn.identityToken;
+        } else {
+          employee = await employeeFor(request, env);
+        }
+        return json({
+          access_token: await createAccessToken(origin, env.CONSULTA_ACCESS_SECRET, employee?.subject ?? null),
+          ...(identityToken ? { identity_token: identityToken } : {}),
+        }, 200, origin);
       }
-
-      const rateLimit = await env.CONSULTA_RATE_LIMITER.limit({ key: dni });
-      if (!rateLimit.success) {
-        console.warn(
-          JSON.stringify({
-            event: "consulta_rate_limited",
-            dni_masked: maskDni(dni),
-          }),
-        );
-        return json(
-          { error: "Demasiadas consultas. Intenta nuevamente en un minuto." },
-          429,
-          origin,
-        );
+      employee = await employeeFor(request, env);
+      const access = await validateAccessToken(
+        request.headers.get("X-Consulta-Access"), origin,
+        env.CONSULTA_ACCESS_SECRET, employee?.subject ?? null,
+      );
+      if (!access) throw new AccessError(403, "Acceso no verificado o vencido");
+      if (url.pathname === "/sesion") {
+        // workerd can expose an empty stream for a POST with no body.
+        const reader = request.body?.getReader();
+        if (reader) {
+          try {
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              if (value.byteLength) {
+                await reader.cancel();
+                throw new AccessError(400, "Solicitud invalida");
+              }
+            }
+          } finally { reader.releaseLock(); }
+        }
+        return json({ valid: true, expires_in: access.exp - Math.floor(Date.now() / 1000) }, 200, origin);
       }
-
+      if (!employee) {
+        await limitRequest(env.CONSULTA_TOKEN_RATE_LIMITER, "query-token",
+          request.headers.get("X-Consulta-Access"), env);
+      }
+      const requestedDni = await readDni(request);
+      if (employee && requestedDni !== employee.dni) {
+        throw new AccessError(403, "Empleado no autorizado");
+      }
+      const dni = employee?.dni ?? requestedDni;
+      // RPC bigint/integer parameters treat leading zeros as the same DNI.
+      await limitRequest(env.CONSULTA_RATE_LIMITER, "employee-query", String(Number(dni)), env);
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY ||
+          !/^https:\/\/[^/]+\.supabase\.co$/.test(env.SUPABASE_URL)) {
+        throw new AccessError(503, "Servicio temporalmente no disponible");
+      }
       let result = await querySupabase(dni, env);
       const carrera = await queryCarrera(dni, env);
       if (!carrera) {
@@ -389,13 +394,13 @@ export default {
       const responseBody = {
         found: true,
         dni_masked: maskDni(dni),
-        apellido: result.apellido,
-        nombre: result.nombre,
+        apellido: typeof result.apellido === "string" ? result.apellido : "",
+        nombre: typeof result.nombre === "string" ? result.nombre : "",
         mostrar_horas_regulares: carrera.carrera_id !== 2,
       };
 
       if (responseBody.mostrar_horas_regulares) {
-        responseBody.particular_restantes_hhmm = result.particular_restantes_hhmm;
+        responseBody.particular_restantes_hhmm = optionalHhmm(result.particular_restantes_hhmm);
         responseBody.enfermedad_usada = Boolean(result.enfermedad_usada);
       }
 
@@ -405,13 +410,10 @@ export default {
 
       return json(responseBody, 200, origin);
     } catch (error) {
-      console.error(
-        JSON.stringify({
-          event: "consulta_error",
-          message: error instanceof Error ? error.message : "unknown",
-        }),
-      );
-      return json({ error: "No se pudo realizar la consulta" }, 502, origin);
+      // Never log request bodies, bearer tokens, DNI, upstream payloads or error messages.
+      if (!(error instanceof AccessError)) console.error(JSON.stringify({ event: "request_failed" }));
+      return json({ error: error instanceof AccessError ? error.message :
+        "No se pudo realizar la solicitud" }, error instanceof AccessError ? error.status : 502, origin);
     }
   },
 };

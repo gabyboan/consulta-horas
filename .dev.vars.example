@@ -1,3 +1,4 @@
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 TURNSTILE_SECRET=your-turnstile-secret
+CONSULTA_ACCESS_SECRET=replace-with-at-least-32-random-secret-characters

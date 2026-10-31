@@ -23,7 +23,8 @@ function resetTurnstile(){
 }
 
 function clearAccessToken(){
-  try { sessionStorage.removeItem(ACCESS_STORAGE_KEY); }
+  try { sessionStorage.removeItem(ACCESS_STORAGE_KEY);
+    sessionStorage.removeItem("consultaHorasIdentityToken"); }
   catch (_) {}
 }
 
@@ -61,6 +62,9 @@ window.onTurnstileOk = async (turnstileToken) => {
   try {
     const response = await fetch(`${API_BASE}/acceso`, {
       method: "POST",
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(12000),
       headers: { "X-Turnstile-Token": turnstileToken },
     });
     const data = await response.json().catch(() => ({}));
@@ -74,9 +78,9 @@ window.onTurnstileOk = async (turnstileToken) => {
 
     setPill("ok", "Acceso habilitado");
     gateMessage.textContent = "Verificación correcta. Ingresando a la consulta...";
-    window.location.replace("./consulta");
+    window.location.replace("/consulta");
   } catch (error) {
-    console.error(error);
+
     clearAccessToken();
     setPill("bad", "No verificado");
     gateMessage.textContent = error instanceof Error

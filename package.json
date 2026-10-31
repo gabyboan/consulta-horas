@@ -1,16 +1,19 @@
 {
   "name": "consulta-horas",
   "version": "1.0.0",
-  "private": false,
+  "private": true,
   "type": "module",
   "scripts": {
     "dev:worker": "wrangler dev",
     "deploy:worker": "wrangler deploy",
     "deploy:pages": "wrangler pages deploy public --project-name hesm-horas",
     "check": "wrangler deploy --dry-run",
-    "test": "node --test"
+    "test": "node --test",
+    "test:browser": "node scripts/browser-smoke.mjs"
   },
   "devDependencies": {
-    "wrangler": "^4.0.0"
+    "miniflare": "5.20261023.3-beta",
+    "playwright": "1.64.1",
+    "wrangler": "4.156.0"
   }
 }

@@ -7,26 +7,26 @@
 
   <meta name="robots" content="noindex,nofollow,noarchive,nosnippet" />
   <meta name="referrer" content="no-referrer" />
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; connect-src 'self' https://consulta-horas.recursoshumanos-hesm.workers.dev; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests" />
 
   <link rel="icon" href="/favicon.ico" sizes="any" />
-  <link rel="stylesheet" href="./assets/app.css" />
+  <link rel="stylesheet" href="/assets/app.css" />
 </head>
 <body>
   <div class="wrap">
     <header>
       <div class="brand">
         <h1>Consulta de Horas</h1>
-        <p class="sub">Ingresa tu DNI para consultar los beneficios disponibles.</p>
+        <p class="sub">Consulta de horas del personal.</p>
       </div>
       <div class="pill" id="pill">
         <span class="dot" id="dot"></span>
-        <span id="pillText">Acceso verificado</span>
+        <span id="pillText">Verificando acceso</span>
       </div>
     </header>
 
-    <div class="card">
+    <p id="accessMessage" role="status" aria-live="polite">Verificando el acceso antes de solicitar el DNI…</p>
+    <noscript><p>Activá JavaScript y <a href="/">completá el CAPTCHA</a> para continuar.</p></noscript>
+    <div class="card" id="consultaPanel" hidden>
       <form class="form" id="frm" novalidate>
         <div>
           <label for="dni">DNI</label>
@@ -38,7 +38,7 @@
       </form>
 
 
-      <div id="out" style="display:none;">
+      <div id="out">
         <div class="resultHead">
           <div>
             <p class="name" id="nombre"></p>
@@ -80,6 +80,6 @@
     </div>
   </div>
 
-  <script src="./assets/app.js" defer></script>
+  <script src="/assets/app.js" defer></script>
 </body>
 </html>

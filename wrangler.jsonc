@@ -5,7 +5,12 @@
   "compatibility_date": "2026-06-03",
   "compatibility_flags": ["nodejs_compat"],
   "preview_urls": false,
+  "account_id": "7b1da884ae57bddb8c43eb4f4d6cd896",
+  "vars": { "EMPLOYEE_AUTH_MODE": "public-captcha" },
   "ratelimits": [
+    { "name": "CONSULTA_TOKEN_RATE_LIMITER", "namespace_id": "2026103103", "simple": { "limit": 5, "period": 60 } },
+    { "name": "ACCESO_RATE_LIMITER", "namespace_id": "2026103101", "simple": { "limit": 10, "period": 60 } },
+    { "name": "CONSULTA_IP_RATE_LIMITER", "namespace_id": "2026103102", "simple": { "limit": 20, "period": 60 } },
     {
       "name": "CONSULTA_RATE_LIMITER",
       "namespace_id": "2026060301",
@@ -17,6 +22,8 @@
   ],
   "observability": {
     "enabled": true,
-    "head_sampling_rate": 1
+    "redact_query_string": true,
+    "head_sampling_rate": 1,
+    "logs": { "enabled": true, "invocation_logs": false }
   }
 }

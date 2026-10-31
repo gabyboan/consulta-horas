@@ -12,7 +12,11 @@ function testEnvironment() {
     SUPABASE_URL: "https://example.supabase.co",
     SUPABASE_SERVICE_ROLE_KEY: "test-key",
     TURNSTILE_SECRET: "test-turnstile-secret",
-    CONSULTA_ACCESS_SECRET: "test-access-secret",
+    CONSULTA_ACCESS_SECRET: "fictional-test-secret-at-least-32-characters",
+    EMPLOYEE_AUTH_MODE: "public-captcha",
+    CONSULTA_TOKEN_RATE_LIMITER: { limit: async () => ({ success: true }) },
+    ACCESO_RATE_LIMITER: { limit: async () => ({ success: true }) },
+    CONSULTA_IP_RATE_LIMITER: { limit: async () => ({ success: true }) },
     CONSULTA_RATE_LIMITER: {
       limit: async () => ({ success: true }),
     },
@@ -24,6 +28,7 @@ async function obtenerAcceso(env, allowedOrigin = origin) {
     method: "POST",
     headers: {
       Origin: allowedOrigin,
+      "CF-Connecting-IP": "192.0.2.1",
       "X-Turnstile-Token": "test-token",
     },
   });
@@ -48,6 +53,7 @@ async function consultaCon(resultadoRpc, opciones = {}) {
       return Response.json({
         success: true,
         hostname: new URL(allowedOrigin).hostname,
+        action: "turnstile-spin-v1", challenge_ts: new Date().toISOString(),
       });
     }
     if (target.includes("/rpc/rpc_consulta_horas_carrera_preliminar")) {
@@ -65,10 +71,13 @@ async function consultaCon(resultadoRpc, opciones = {}) {
   try {
     const env = testEnvironment();
     const accessToken = await obtenerAcceso(env, allowedOrigin);
-    const request = new Request("https://worker.example/consulta?dni=12345678", {
+    const request = new Request("https://worker.example/consulta", {
+      method: "POST", body: JSON.stringify({ dni: "12345678" }),
       headers: {
         Origin: allowedOrigin,
         "X-Consulta-Access": accessToken,
+        "Content-Type": "application/json",
+        "CF-Connecting-IP": "192.0.2.1",
       },
     });
     const response = await worker.fetch(request, env);
@@ -155,8 +164,9 @@ test("encuentra la carrera profesional sin horas particulares ni enfermedad", as
 });
 test("requiere un pase de acceso desde el portal", async () => {
   const request = new Request(
-    "https://consulta-horas.recursoshumanos-hesm.workers.dev/consulta?dni=12345678",
+    "https://consulta-horas.recursoshumanos-hesm.workers.dev/consulta",
     {
+      method: "POST", body: JSON.stringify({ dni: "12345678" }),
       headers: {
         Origin: previewOrigin,
         "X-Turnstile-Token": "test-token",
@@ -193,7 +203,7 @@ test("emite un pase solo luego de verificar Turnstile", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     if (String(url).includes("siteverify")) {
-      return Response.json({ success: true, hostname: "hesm-horas.pages.dev" });
+      return Response.json({ success: true, hostname: "hesm-horas.pages.dev", action: "turnstile-spin-v1", challenge_ts: new Date().toISOString() });
     }
     throw new Error(`Fetch inesperado: ${url}`);
   };
@@ -226,7 +236,7 @@ test("rechaza un pase emitido para otro origen", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     if (String(url).includes("siteverify")) {
-      return Response.json({ success: true, hostname: "hesm-horas.pages.dev" });
+      return Response.json({ success: true, hostname: "hesm-horas.pages.dev", action: "turnstile-spin-v1", challenge_ts: new Date().toISOString() });
     }
     throw new Error(`Fetch inesperado: ${url}`);
   };
@@ -234,10 +244,13 @@ test("rechaza un pase emitido para otro origen", async () => {
   try {
     const env = testEnvironment();
     const accessToken = await obtenerAcceso(env, origin);
-    const request = new Request("https://worker.example/consulta?dni=12345678", {
+    const request = new Request("https://worker.example/consulta", {
+      method: "POST", body: JSON.stringify({ dni: "12345678" }),
       headers: {
         Origin: previewOrigin,
         "X-Consulta-Access": accessToken,
+        "Content-Type": "application/json",
+        "CF-Connecting-IP": "192.0.2.1",
       },
     });
     const response = await worker.fetch(request, env);
@@ -251,13 +264,13 @@ test("rechaza un pase emitido para otro origen", async () => {
 test("permite el preflight de los dos encabezados de seguridad", async () => {
   const request = new Request("https://worker.example/acceso", {
     method: "OPTIONS",
-    headers: { Origin: origin },
+    headers: { Origin: origin, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "X-Turnstile-Token, X-Consulta-Access" },
   });
   const response = await worker.fetch(request, testEnvironment());
 
   assert.equal(response.status, 204);
   assert.match(
     response.headers.get("Access-Control-Allow-Headers") || "",
-    /X-Consulta-Access/,
+    /x-consulta-access/i,
   );
 });

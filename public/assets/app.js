@@ -2,6 +2,8 @@ const API_BASE = "https://consulta-horas.recursoshumanos-hesm.workers.dev";
 const WHATSAPP_NUMBER = "5493435099425";
 const TIMEOUT_MS = 12000;
 const ACCESS_STORAGE_KEY = "consultaHorasAccessToken";
+const consultaPanel = document.getElementById("consultaPanel");
+const accessMessage = document.getElementById("accessMessage");
 
 const frm = document.getElementById("frm");
 const dniInput = document.getElementById("dni");
@@ -24,6 +26,10 @@ const dot = document.getElementById("dot");
 const pillText = document.getElementById("pillText");
 
 let lastController = null;
+let accessReady = false;
+let accessDeadline = 0;
+let accessTimer;
+let checkingAccess = false;
 
 function getAccessToken(){
   try { return sessionStorage.getItem(ACCESS_STORAGE_KEY) || ""; }
@@ -31,13 +37,18 @@ function getAccessToken(){
 }
 
 function clearAccessToken(){
-  try { sessionStorage.removeItem(ACCESS_STORAGE_KEY); }
+  try { sessionStorage.removeItem(ACCESS_STORAGE_KEY);
+    sessionStorage.removeItem("consultaHorasIdentityToken"); }
   catch (_) {}
 }
 
 function goToGate(){
+  accessReady = false;
+  consultaPanel.hidden = true;
+  dniInput.value = "";
+  out.style.display = "none";
   clearAccessToken();
-  window.location.replace("./");
+  window.location.replace("/");
 }
 
 function setPill(state, text){
@@ -114,7 +125,7 @@ function mostrarFrancos(value){
 }
 async function consultar(dni){
   const accessToken = getAccessToken();
-  if(!accessToken){
+  if(!accessToken || !accessReady || Date.now() >= accessDeadline){
     goToGate();
     const error = new Error("Acceso no verificado");
     error.accessExpired = true;
@@ -127,15 +138,18 @@ async function consultar(dni){
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try{
-    const r = await fetch(`${API_BASE}/consulta?dni=${encodeURIComponent(dni)}`, {
-      method: "GET",
+    const r = await fetch(`${API_BASE}/consulta`, {
+      method: "POST",
+      cache: "no-store",
+      redirect: "error",
+      body: JSON.stringify({ dni }),
       signal: controller.signal,
-      headers: { "X-Consulta-Access": accessToken }
+      headers: { "X-Consulta-Access": accessToken, "Content-Type": "application/json" }
     });
 
     const data = await r.json().catch(() => ({}));
     if(!r.ok){
-      if (r.status === 403) {
+      if (r.status === 401 || r.status === 403) {
         goToGate();
         const error = new Error(data?.error || "La verificación venció");
         error.accessExpired = true;
@@ -150,12 +164,53 @@ async function consultar(dni){
   }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  if (!getAccessToken()) {
+async function prepareAccess(){
+  if (checkingAccess) return;
+  accessReady = false;
+  consultaPanel.hidden = true;
+  accessMessage.hidden = false;
+  clearTimeout(accessTimer);
+  const token = getAccessToken();
+  if (!token) {
     goToGate();
     return;
   }
-  setWhatsAppLink();
+  checkingAccess = true;
+  try {
+    const response = await fetch(`${API_BASE}/sesion`, {
+      method: "POST", cache: "no-store", redirect: "error",
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      headers: { "X-Consulta-Access": token },
+    });
+    if (response.status === 401 || response.status === 403) { goToGate(); return; }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.valid !== true || !Number.isInteger(data.expires_in) ||
+        data.expires_in < 1 || data.expires_in > 600) {
+      throw new Error(data.error || "No se pudo verificar el acceso. Recargá la página para reintentar.");
+    }
+    accessDeadline = Date.now() + data.expires_in * 1000;
+    accessTimer = setTimeout(goToGate, data.expires_in * 1000);
+    accessReady = true;
+    accessMessage.hidden = true;
+    consultaPanel.hidden = false;
+    setPill("ok", "Acceso verificado");
+    setWhatsAppLink();
+  } catch (error) {
+    setPill("bad", "Acceso no verificado");
+    accessMessage.textContent = error instanceof Error ? error.message : "No se pudo verificar el acceso.";
+  } finally { checkingAccess = false; }
+}
+
+document.addEventListener("DOMContentLoaded", prepareAccess);
+window.addEventListener("pagehide", () => {
+  accessReady = false;
+  consultaPanel.hidden = true;
+  out.style.display = "none";
+  dniInput.value = "";
+  clearTimeout(accessTimer);
+});
+window.addEventListener("pageshow", event => {
+  if (event.persisted) prepareAccess();
 });
 
 dniInput.addEventListener("input", () => {
@@ -165,6 +220,7 @@ dniInput.addEventListener("input", () => {
 
 frm.addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (!accessReady || Date.now() >= accessDeadline) { goToGate(); return; }
 
   const dni = onlyDigits(dniInput.value);
   dniInput.value = dni;
@@ -214,7 +270,7 @@ frm.addEventListener("submit", async (e) => {
     out.style.display = "block";
   } catch(err){
     if (err?.accessExpired) return;
-    console.error(err);
+
     out.style.display = "none";
     setPill("bad", "Error");
     alert(err.message || "Error");
